@@ -3,16 +3,20 @@ medrack CLI — entry point for the `medrack` command.
 
 Stage 2.1 added `init`, `status`, `version`. Stage 2.2 / T10 adds
 `ingest-book`, the end-to-end orchestrator for the KB ingest pipeline
-(T1 format detection → T9 quality gate).
+(T1 format detection → T9 quality gate). Stage 2.3 / M6 adds
+`ingest-module`, the end-to-end orchestrator for the module question
+ingest pipeline (M1 module text extract → M5 module storage).
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import sys
 import time
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +33,11 @@ from .ingest import manifest
 from .ingest import ocr as ocr_mod
 from .ingest import quality as quality_mod
 from .ingest import text_extract as text_extract_mod
+from .module import extract as module_extract_mod
+from .module import format as module_format_mod
+from .module import llm_extract as module_llm_mod
+from .module import mcq as module_mcq_mod
+from .module import storage as module_storage_mod
 from .utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -355,6 +364,163 @@ def cmd_ingest_book(args: argparse.Namespace) -> int:
     return 0
 
 
+# Kebab-case slug pattern: only lowercase letters, digits, and hyphens,
+# must start and end with an alphanumeric. Mirrors the brief's
+# "kebab-case (only lowercase, digits, hyphens)" rule.
+_KEBAB_CASE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+# Coverage threshold below which the LLM-fallback extractor is invoked.
+# Mirrors M2's documentation: < 0.5 means regex probably missed a lot.
+_LLM_FALLBACK_COVERAGE = 0.5
+
+
+def cmd_ingest_module(args: argparse.Namespace) -> int:
+    """Orchestrate the M1-M5 module question ingest pipeline on a single PDF.
+
+    Pipeline:
+        1. Validate PDF path (exit 2 if missing).
+        2. Validate subject via config.Subject.from_str (exit 3 on failure).
+        3. Validate module name is kebab-case (exit 5 on failure).
+        4. Extract pages with M1 (`extract_module_pages`).
+        5. Determine format: forced (`mcq`/`theory`) or M4 auto-detect.
+        6. Extract questions with M2 (`extract_mcqs_from_pages`).
+        7. If regex coverage < 50% AND format is MCQ, try M3 LLM fallback
+           (gracefully degrades to [] in Stage 2.3 — no real LLM client).
+        8. Build the data dict (questions + metadata) and save with M5.
+        9. Print summary to stdout (so test assertions on "questions" work).
+
+    Exit codes:
+        0 — success
+        2 — file not found
+        3 — invalid subject
+        5 — invalid module name (kebab-case) or downstream failure
+    """
+    start_time = time.perf_counter()
+
+    # 1. PDF path validation.
+    pdf_path = Path(args.pdf).expanduser()
+    if not pdf_path.exists():
+        print(f"ERROR: file not found: {pdf_path}", file=sys.stderr)
+        return 2
+
+    # 2. Subject validation.
+    try:
+        subject = config.Subject.from_str(args.subject)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
+
+    # 3. Module-name validation (kebab-case slug).
+    module_name = args.name
+    if not _KEBAB_CASE_RE.match(module_name):
+        print(
+            f"ERROR: module name {module_name!r} is not kebab-case "
+            f"(allowed: lowercase letters, digits, hyphens; "
+            f"e.g. 'psm-module-1')",
+            file=sys.stderr,
+        )
+        return 5
+
+    # 4. Page extraction (M1).
+    print(f"Extracting pages from {pdf_path.name}...", file=sys.stderr)
+    try:
+        pages = module_extract_mod.extract_module_pages(pdf_path)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Page extraction failed for %s", pdf_path)
+        print(f"ERROR: page extraction failed: {exc}", file=sys.stderr)
+        return 5
+    print(f"  extracted {len(pages)} cleaned page(s)", file=sys.stderr)
+
+    # 5. Format determination (M4).
+    forced_format = args.format  # "auto" | "mcq" | "theory"
+    if forced_format == "auto":
+        format_str = module_format_mod.detect_module_format(pages[:5])  # type: ignore[arg-type]
+    else:
+        format_str = forced_format
+    print(f"Format: {format_str} (forced={forced_format})", file=sys.stderr)
+
+    # 6. Question extraction (M2).
+    questions = module_mcq_mod.extract_mcqs_from_pages(pages)
+    coverage = module_mcq_mod.regex_extraction_coverage(pages)
+    print(
+        f"Extracted {len(questions)} question(s) via regex "
+        f"(coverage {coverage:.0%})",
+        file=sys.stderr,
+    )
+
+    # 7. LLM fallback (M3) — safety net when regex coverage is poor.
+    # In Stage 2.3 there is no real LLM client wired, so this just
+    # degrades to []; we still call it through the path so Stage 2.4
+    # can drop in a real client without changes to the orchestrator.
+    if coverage < _LLM_FALLBACK_COVERAGE and format_str == "mcq":
+        try:
+            llm_results = module_llm_mod.extract_questions_with_llm(
+                [p.get("text", "") or "" for p in pages],
+                subject=subject.value,
+                llm_client=None,  # Stage 2.4 will pass a real client
+            )
+        except NotImplementedError:
+            # No real LLM client in Stage 2.3 — fall back to regex results.
+            llm_results = []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM fallback failed: %s", exc)
+            llm_results = []
+        if llm_results:
+            print(
+                f"LLM fallback produced {len(llm_results)} additional question(s)",
+                file=sys.stderr,
+            )
+
+    # 8. Build the data dict and save (M5).
+    data = {
+        "questions": [asdict(q) for q in questions],
+        "metadata": {
+            "module_name": module_name,
+            "subject": subject.value,
+            "title": module_name,
+            "format": format_str,
+            "total_pages": len(pages),
+            "questions_extracted": len(questions),
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    try:
+        module_storage_mod.save_extracted(subject.value, module_name, data)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("save_extracted failed for %s/%s", subject.value, module_name)
+        print(f"ERROR: save failed: {exc}", file=sys.stderr)
+        return 5
+
+    # 9. Summary to stdout (so tests can assert on it).
+    elapsed = time.perf_counter() - start_time
+    extracted_path = module_storage_mod.extracted_json_path(
+        subject.value, module_name
+    )
+    print(
+        f"Extracted {len(questions)} questions from {len(pages)} pages "
+        f"(format={format_str}, coverage={coverage:.0%})"
+    )
+    print(f"Saved: {extracted_path}")
+    print(f"Total time: {elapsed:.1f}s")
+    print(f"Module: {module_name} [{subject.value}]")
+
+    logger.info(
+        "Module ingest complete: name=%s subject=%s pages=%d questions=%d "
+        "format=%s coverage=%.2f elapsed=%.1fs",
+        module_name,
+        subject.value,
+        len(pages),
+        len(questions),
+        format_str,
+        coverage,
+        elapsed,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="medrack",
@@ -381,6 +547,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="If a book with the same SHA-256 is already indexed, archive it first.",
     )
     sp.set_defaults(func=cmd_ingest_book)
+
+    sp = sub.add_parser(
+        "ingest-module", help="Ingest a question-bank module PDF (M1-M5 pipeline)"
+    )
+    sp.add_argument("pdf", help="Path to the module PDF")
+    sp.add_argument(
+        "--subject", required=True, help="Subject (psm, fmt, medicine, ...)"
+    )
+    sp.add_argument(
+        "--name",
+        required=True,
+        help="Module name (kebab-case slug, e.g. 'psm-module-1')",
+    )
+    sp.add_argument(
+        "--format",
+        default="auto",
+        choices=["auto", "mcq", "theory"],
+        help="Module format (default: auto-detect from first 5 pages)",
+    )
+    sp.set_defaults(func=cmd_ingest_module)
 
     return p
 
