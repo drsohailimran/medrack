@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from . import config
+from .config import Subject
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -88,6 +89,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         print("  (no manifest — run `medrack init`)")
 
+    print(f"\nSubjects ({len(Subject)}): {', '.join(Subject.values())}")
     return 0
 
 
