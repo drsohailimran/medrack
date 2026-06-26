@@ -25,6 +25,7 @@ Design notes:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -116,10 +117,40 @@ def get_book(sha256: str) -> dict | None:
     return None
 
 
+def archive_book(sha256: str) -> bool:
+    """Mark the book with the given ``sha256`` as archived.
+
+    Sets ``archived_at`` to the current UTC time in ISO 8601 format
+    (e.g. ``"2026-06-26T16:00:00+00:00"``) and persists the manifest.
+
+    Returns
+    -------
+    bool
+        ``True`` if a non-archived book with that sha was found and
+        archived; ``False`` if no such book exists (either no match or
+        it was already archived).
+
+    This is a no-op for books that are already archived — we don't bump
+    the ``archived_at`` timestamp on a re-archive, so the original
+    archive time is preserved.
+    """
+    manifest = load_manifest()
+    archived = False
+    for book in manifest.get("books", []):
+        if book.get("sha256") == sha256 and not book.get("archived_at"):
+            book["archived_at"] = datetime.now(timezone.utc).isoformat()
+            archived = True
+            break
+    if archived:
+        save_manifest(manifest)
+    return archived
+
+
 __all__ = [
     "load_manifest",
     "save_manifest",
     "add_book",
     "list_books",
     "get_book",
+    "archive_book",
 ]
