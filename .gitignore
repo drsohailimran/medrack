@@ -1,0 +1,35 @@
+# Data dirs (large, regenerated, not source)
+books/
+index/
+modules/
+answers/
+output/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Test artifacts
+medrack_test/
+test_*.pdf
+*_chunks/
+
+# Local env
+.env
+venv/
+.venv/
