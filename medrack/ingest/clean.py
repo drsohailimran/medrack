@@ -20,52 +20,80 @@ _TRAILING_WS_RE = re.compile(r"[ \t]+(?=\n|$)")
 
 
 def _collapse_letter_spacing_in_line(line: str) -> str:
-    """Collapse a line of letter-spaced tokens into a single word.
+    """Collapse letter-spaced tokens in a line.
 
-    Heuristic (conservative):
-      - Split on whitespace.
-      - Require 90%+ of tokens to be single alphabetic characters.
-      - Collapse only when the join makes sense:
-          * The line contains at least one uppercase letter (heading/title), OR
-          * All tokens are lowercase AND the joined string is > 8 chars
-            (long enough that letter-spacing is the plausible reading).
+    Walks through the line and collapses MAXIMAL RUNS of single-character
+    alphabetic tokens. A "run" is a contiguous sequence of tokens that are
+    each single alpha characters. Each run gets joined into one word.
 
-    Returns the original line when no rule applies.
+    This handles the PSM Module 1 case where the entire page is one
+    line with hundreds of tokens (e.g. "15. Vi r u l e n c e ... (a) Pro ...
+    Key:c 16. Bu r d e n ...") — the per-line whole-string rule fails
+    because the line also has multi-letter tokens like "mortality" and
+    "rate". The per-run rule works because "Vi r u l e n c e" IS a
+    maximal run of single-char tokens (15 in a row) and should be
+    collapsed to "Virulence".
+
+    Conservative: only collapse runs of ≥ 3 single-char tokens.
+    Shorter runs are ambiguous (could be "I am a" with "I" and "a" as
+    single chars but "am" as multi-char).
     """
     stripped = line.strip()
     if not stripped:
         return line
 
     tokens = stripped.split()
-    if len(tokens) < 2:
+    if len(tokens) < 3:
         return line
 
-    # All tokens must be pure alphabetic (no digits or punctuation). A line
-    # like "I am a doctor" has multi-letter tokens, but more importantly a
-    # line like "Foo 12 bar" would have a digit and must be left alone.
-    if not all(t.isalpha() for t in tokens):
+    # Two cases the cleaner handles:
+    #
+    # Case A — all single-char tokens (e.g. "D E P A R T M E N T"):
+    #   Apply the conservative whole-line rule: collapse when the joined
+    #   string is at least 9 chars OR contains an uppercase letter.
+    #   (a b c d e f g → joined "abcdefg" 7 chars, not collapsed;
+    #    D E P A R T M E N T → joined "DEPARTMENT" 10 chars, collapsed.)
+    #
+    # Case B — multi-char token followed by single-char run (e.g. "Def i n i t i o n"):
+    #   Always join, because the run is clearly the continuation of the
+    #   previous word. This is the common pattern in PSM Module 1 and
+    #   other Indian medical textbooks where the first word of a heading
+    #   or option is not letter-spaced.
+    single_char_indices = [k for k, t in enumerate(tokens) if len(t) == 1 and t.isalpha()]
+    all_single = len(single_char_indices) == len(tokens)
+    if all_single and len(tokens) >= 3:
+        joined = "".join(tokens)
+        has_upper = any(c.isupper() for c in joined)
+        if has_upper or len(joined) > 8:
+            return joined
         return line
 
-    single_char_count = sum(1 for t in tokens if len(t) == 1)
+    # Case B: walk and collapse runs of single-char tokens, joining with
+    # any adjacent multi-char alpha token.
+    result: list[str] = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if len(t) == 1 and t.isalpha():
+            j = i
+            while j < len(tokens) and len(tokens[j]) == 1 and tokens[j].isalpha():
+                j += 1
+            run_len = j - i
+            if run_len >= 3:
+                run_text = "".join(tokens[i:j])
+                if result and result[-1].isalpha() and len(result[-1]) > 1:
+                    result[-1] = result[-1] + run_text
+                else:
+                    result.append(run_text)
+                i = j
+            else:
+                result.append(t)
+                i += 1
+        else:
+            result.append(t)
+            i += 1
 
-    # Two ways to qualify for collapse (either is enough):
-    #   (i)  90%+ of the tokens are single characters, OR
-    #   (ii) at least 5 tokens are single characters (catches cases like
-    #        "Def i n i t i o n" where a 3-letter prefix drops the ratio
-    #        below 90% but the line is clearly letter-spaced).
-    ratio = single_char_count / len(tokens)
-    if ratio < 0.9 and single_char_count < 5:
-        return line
-
-    joined = "".join(tokens)
-    has_upper = any(c.isupper() for c in joined)
-    all_lower = joined.isalpha() and joined.islower()
-
-    if has_upper:
-        return joined
-    if all_lower and len(joined) > 8:
-        return joined
-    return line
+    return " ".join(result)
 
 
 def _is_header_or_footer_line(line: str) -> bool:

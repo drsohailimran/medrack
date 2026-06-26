@@ -44,6 +44,34 @@ QUESTION_START_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Question-start detector for the NEWLINE-INSERTION preprocessor.
+# This pattern matches `\d+\.` ANYWHERE in the text, not just at line
+# starts, so we can find them on pages where the whole content is one
+# line. The `(?:[A-Z]|[a-z])` lookahead requires a letter right after
+# the period to reduce false positives (avoids matching decimal numbers).
+QUESTION_START_INLINE_RE = re.compile(
+    r"\d+[.)]\s*(?=[A-Za-z])"
+)
+
+
+def _insert_newlines_before_questions(text: str) -> str:
+    """Insert a newline before each question-start pattern not already at
+    the start of a line. Returns the text with newlines inserted.
+    """
+    out: list[str] = []
+    last_end = 0
+    for match in QUESTION_START_INLINE_RE.finditer(text):
+        # Don't insert a newline if the match is already at the start of
+        # a line (preceded only by whitespace from a newline).
+        prefix = text[last_end:match.start()]
+        out.append(text[last_end:match.start()])
+        if not prefix.endswith("\n") and not prefix.rstrip().endswith("\n"):
+            out.append("\n")
+        out.append(match.group())
+        last_end = match.end()
+    out.append(text[last_end:])
+    return "".join(out)
+
 # Option body: `(a) text`  where text is a non-greedy run of non-paren
 # chars, terminated by either the next option marker or the answer key.
 # Use re.DOTALL so a single option may wrap across lines.
@@ -85,15 +113,24 @@ class ExtractedQuestion:
 
 
 def _extract_question_for_page(
-    page: dict, match: re.Match, next_start: Optional[int], qid_counter: list[int]
+    page: dict,
+    page_text: str,
+    match: re.Match,
+    next_start: Optional[int],
+    qid_counter: list[int],
 ) -> ExtractedQuestion:
-    """Build one ExtractedQuestion from a single question-start match."""
+    """Build one ExtractedQuestion from a single question-start match.
+
+    `page_text` is the preprocessed text (newlines inserted before question
+    starts). `page` is kept for the page_num field in the result. The match
+    indices are valid in `page_text`, NOT in `page["text"]`.
+    """
     start = match.start()
 
     if next_start is not None:
-        raw = page["text"][start:next_start]
+        raw = page_text[start:next_start]
     else:
-        raw = page["text"][start:]
+        raw = page_text[start:]
 
     # Drop the question-number prefix from the text we hand to option /
     # answer scanners, so the scanners only see question body.
@@ -154,6 +191,12 @@ def extract_mcqs_from_pages(pages: list[dict]) -> list[ExtractedQuestion]:
 
     for page in pages:
         text = page.get("text", "") or ""
+        # Preprocess: insert newlines before question-start patterns that
+        # are NOT already at line beginnings. This handles PDFs where the
+        # entire page is one line (common with `pdftotext` output on
+        # textbooks). After this pass, the question-start regex (which
+        # anchors on `^` or `\n`) can find every question.
+        text = _insert_newlines_before_questions(text)
         # Collect every question-start match on this page.
         starts = list(QUESTION_START_RE.finditer(text))
         if not starts:
@@ -162,7 +205,7 @@ def extract_mcqs_from_pages(pages: list[dict]) -> list[ExtractedQuestion]:
         for i, match in enumerate(starts):
             next_start = starts[i + 1].start() if i + 1 < len(starts) else None
             questions.append(
-                _extract_question_for_page(page, match, next_start, qid_counter)
+                _extract_question_for_page(page, text, match, next_start, qid_counter)
             )
 
     return questions
