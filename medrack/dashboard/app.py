@@ -24,7 +24,7 @@ def build_dashboard() -> gr.Blocks:
 
     Tabs: Ingest | Modules | Preview | State.
     """
-    with gr.Blocks(title="MedRack Dashboard", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="MedRack Dashboard") as demo:
         gr.Markdown("# MedRack Dashboard")
         with gr.Tabs():
             with gr.Tab("Ingest"):
@@ -451,5 +451,10 @@ def _list_cached_answers() -> list[list[str]]:
 def main() -> int:
     """Launch the dashboard. CLI entry point for `medrack dashboard`."""
     demo = build_dashboard()
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    demo.launch(
+        server_name="127.0.0.1",
+        server_port=7860,
+        share=False,
+        theme=gr.themes.Soft(),
+    )
     return 0
