@@ -168,9 +168,14 @@ async def cmd_preview(update, context):
         await update.message.reply_text(f"ERROR: {exc}")
         return
     state = cli._load_preview_state()
-    if rc == 0 and state and state.get("pdf_path"):
+    # state is wrapped in {"last_preview": {...}}. For backwards compat
+    # with test fixtures, also accept a flat shape where "pdf_path" is
+    # at the top level.
+    inner = state.get("last_preview", {}) if state else {}
+    pdf_path_str = inner.get("pdf_path") or (state or {}).get("pdf_path")
+    if rc == 0 and pdf_path_str:
         from pathlib import Path
-        pdf = Path(state["pdf_path"])
+        pdf = Path(pdf_path_str)
         if pdf.is_file():
             await update.message.reply_document(
                 document=pdf.open("rb"),
