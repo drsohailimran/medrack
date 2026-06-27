@@ -68,11 +68,17 @@ def _embed_query(question_text: str) -> list[float]:
     return vec[0].tolist()
 
 
-def _build_prompt(question: dict, chunk_texts: list[str]):
+def _build_prompt(question: dict, chunk_texts: list[str], marks: int | None = None):
     """Return ``(BuildResult, system_template_label)``.
 
     Picks the MCQ or Theory template based on ``question["type"]``.
     Raises ``ValueError`` for unknown types — fail loud, not silent.
+
+    Args:
+        question: question dict from extracted.json.
+        chunk_texts: retrieved KB chunks for the question.
+        marks: target marks value (5 or 10) for theory questions. If
+            None, falls back to the configured default.
     """
     qtype = question.get("type")
     if qtype == "mcq":
@@ -82,9 +88,17 @@ def _build_prompt(question: dict, chunk_texts: list[str]):
             retrieved_chunks=chunk_texts,
         )
     if qtype == "theory":
+        # Use the question's marks (5 or 10) to set the answer length.
+        # If marks is None, fall back to the configured default.
+        if marks is None:
+            from medrack import config
+            marks = config.THEORY_DEFAULT_MARKS
+        # Tell Pyright marks is now int (not None).
+        assert marks is not None
         return build_theory_prompt(
             question_text=question["question_text"],
             retrieved_chunks=chunk_texts,
+            marks=marks,
         )
     raise ValueError(
         f"Unknown question type: {qtype!r}. Expected 'mcq' or 'theory'."
@@ -169,6 +183,7 @@ def generate_answer(
     question: dict,
     llm_client: LLMClient,
     force_regenerate: bool = False,
+    marks: int | None = None,
 ) -> dict:
     """Generate an answer for a question, using the cache when possible.
 
@@ -190,6 +205,9 @@ def generate_answer(
     force_regenerate:
         If True, skip the cache lookup and always run the full pipeline.
         Defaults to False.
+    marks:
+        Target marks value (5 or 10) for theory questions. If None, the
+        configured default (10-mark) is used. Ignored for MCQs.
 
     Returns
     -------
@@ -241,7 +259,7 @@ def generate_answer(
     )
 
     # Step 4: build the prompt (MCQ or Theory).
-    build_result = _build_prompt(question, chunk_texts)
+    build_result = _build_prompt(question, chunk_texts, marks=marks)
     system_template = build_result.system_template
 
     # Step 5: call the LLM.

@@ -171,21 +171,35 @@ def build_mcq_prompt(
 def build_theory_prompt(
     question_text: str,
     retrieved_chunks: list[str],
-    word_count_target: int = THEORY_LONG_TARGET_WORDS,
+    marks: int = 10,
+    word_count_target: int | None = None,
 ) -> BuildResult:
     """Build the Theory answer prompt.
-    
+
     Args:
         question_text: The full theory question text.
         retrieved_chunks: List of chunk text strings retrieved from the KB.
-        word_count_target: Target word count for the answer. Defaults to
-            `medrack.config.THEORY_LONG_TARGET_WORDS` (1500).
+        marks: Target marks value (5 or 10). If 5, uses
+            ``medrack.config.THEORY_SHORT_TARGET_WORDS`` (900). If 10 (or
+            anything else), uses ``THEORY_LONG_TARGET_WORDS`` (1500).
+        word_count_target: Override the target word count. If None, it is
+            derived from ``marks``.
     
     Returns:
         BuildResult with the formatted prompt, token estimate, and
         system_template="theory".
     """
     retrieved_chunks_text = _build_chunks_text(retrieved_chunks)
+
+    # Determine the target word count from the marks value. If
+    # word_count_target is explicitly provided, use it; otherwise pick
+    # based on the marks (5 → 900 words, 10 → 1500 words).
+    if word_count_target is None:
+        if marks == 5:
+            from medrack import config as _cfg
+            word_count_target = _cfg.THEORY_SHORT_TARGET_WORDS
+        else:
+            word_count_target = THEORY_LONG_TARGET_WORDS
 
     prompt = THEORY_ANSWER_PROMPT.format(
         word_count_target=word_count_target,

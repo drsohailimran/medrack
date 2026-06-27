@@ -507,10 +507,18 @@ def _resolve_chapter_from_questions(
     ``--chapter`` value falls back to "first question in the module".
     This keeps the prototype working while the real per-chapter
     scoping lands in Stage 2.5.
+
+    As of Stage 2.7, the operator wants to skip MCQs and preview only
+    5-mark / 10-mark theory questions. So we look for the first question
+    whose ``type != "mcq"``; if none exists, return an empty dict
+    (the caller will then return rc=2 to the user).
     """
     if not questions:
         return {}
-    return questions[0]
+    for q in questions:
+        if q.get("type") != "mcq":
+            return q
+    return {}
 
 
 def cmd_preview(args: argparse.Namespace) -> int:
@@ -595,11 +603,38 @@ def cmd_preview(args: argparse.Namespace) -> int:
             f"{chapter_arg!r} is informational in Stage 2.4 prototype)"
         )
     question = _resolve_chapter_from_questions(questions, chapter_arg)
+    if not question:
+        print(
+            f"ERROR: no theory (5-mark / 10-mark) questions found in module "
+            f"{module_name!r}. Re-ingest with `medrack ingest-module` to "
+            f"pick up the long/short answer sections.",
+            file=sys.stderr,
+        )
+        return 2
     chapter_name = chapter_arg if chapter_arg else "all"
+
+    # 3b. If the resolved question is an MCQ, skip — we only preview/answer
+    # 5-mark and 10-mark theory questions (per operator request). The user
+    # can still ingest MCQs (they're stored in extracted.json), but the
+    # answer generation pipeline is theory-only for now.
+    if question.get("type") == "mcq":
+        print(
+            f"ERROR: '{question['qid']}' is an MCQ; preview only supports "
+            f"5-mark/10-mark theory questions. Run `medrack ingest-module` "
+            f"again if the extraction missed the theory sections.",
+            file=sys.stderr,
+        )
+        return 2
 
     # 4. LLM client + answer generation.
     client = _get_llm_client()
     try:
+        # Pass marks to generate_answer so the prompt can target the
+        # right depth (300 words for 5-mark, 1500 words for 10-mark).
+        marks = question.get("marks")
+        if marks is None:
+            # Fall back to the configured default for theory questions.
+            marks = 10
         answer_dict = generate_answer(
             module_name=module_name,
             subject=subject,
@@ -607,6 +642,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
             question=question,
             llm_client=client,
             force_regenerate=args.reanswer,
+            marks=marks,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("generate_answer failed for %s/%s", subject, module_name)
@@ -971,9 +1007,20 @@ def cmd_ingest_module(args: argparse.Namespace) -> int:
     # 6. Question extraction (M2).
     questions = module_mcq_mod.extract_mcqs_from_pages(pages)
     coverage = module_mcq_mod.regex_extraction_coverage(pages)
+
+    # 6b. Section + marks annotation (M2). Walks the pages to find
+    # SECTION A/B/C/D headers and "10 marks" / "5 marks" markers, then
+    # tags each question with its section letter and marks (or None for
+    # MCQs). This lets cmd_preview/cmd_approve filter out MCQs and
+    # generate only 5-mark/10-mark theory answers.
+    page_context = module_mcq_mod.detect_section_marks(pages)
+    module_mcq_mod.annotate_questions_with_marks(questions, page_context)
+    n_5 = sum(1 for q in questions if q.marks == 5)
+    n_10 = sum(1 for q in questions if q.marks == 10)
     print(
         f"Extracted {len(questions)} question(s) via regex "
-        f"(coverage {coverage:.0%})",
+        f"(coverage {coverage:.0%}; {n_5} x 5-mark, {n_10} x 10-mark, "
+        f"{len(questions) - n_5 - n_10} MCQ)",
         file=sys.stderr,
     )
 

@@ -79,8 +79,8 @@ CHAPTER_CONFIDENCE_THRESHOLD = 0.7  # below this, drop the chapter filter
 # ----- LLM -----
 
 LLM_BASE_URL = "https://opencode.ai/zen/go/v1"
-LLM_DEFAULT_MODEL = "deepseek-v4-pro"
-LLM_FALLBACK_CHAIN = ["qwen3.7-max", "kimi-k2.7-code", "glm-5.2"]   # tried in order on rate-limit/error
+LLM_DEFAULT_MODEL = "qwen3.7-max"
+LLM_FALLBACK_CHAIN = ["deepseek-v4-pro", "kimi-k2.7-code", "glm-5.2"]   # tried in order on rate-limit/error
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 2.0   # exponential backoff base
 
@@ -89,6 +89,7 @@ LLM_RETRY_BASE_DELAY_SEC = 2.0   # exponential backoff base
 THEORY_LONG_TARGET_WORDS = 1500
 THEORY_SHORT_TARGET_WORDS = 900
 THEORY_WORD_TOLERANCE = 0.20  # ±20%
+THEORY_DEFAULT_MARKS = 10  # used when a theory question has no explicit marks
 MCQ_EXPLANATION_TARGET_WORDS = 300
 MCQ_EXPLANATION_WORD_TOLERANCE = 0.33  # ±33%
 

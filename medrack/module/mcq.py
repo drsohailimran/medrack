@@ -110,6 +110,8 @@ class ExtractedQuestion:
     module_chapter: Optional[str] = None
     page_num: int = 0
     extraction_method: str = "regex"
+    marks: Optional[int] = None              # 5 or 10 for theory; None for MCQ
+    section: Optional[str] = None            # "A", "B", "C", "D", etc.
 
 
 def _extract_question_for_page(
@@ -226,3 +228,120 @@ def regex_extraction_coverage(pages: list[dict]) -> float:
         1 for page in pages if QUESTION_START_RE.search(page.get("text", "") or "")
     )
     return hits / len(pages)
+
+
+# Match a SECTION letter header (e.g. "SECTION A", "Section B – Long Answer").
+# OCR-garbled text often has the section header concatenated with the
+# previous line AND the next word (e.g. "...Key:a SECTION BModified..."),
+# so we don't anchor on ^ or use \b after the letter — both would fail
+# when the next char is a letter (word char).
+_SECTION_HEADER_RE = re.compile(
+    r"(?:^|\s)section\s*([A-Z])(?=\s|$|[^a-z])",
+    re.IGNORECASE,
+)
+
+# Match a marks indicator (e.g. "10 Marks", "5 marks", "10marks",
+# "1 0 marks"). The digits may have a space between them due to OCR
+# (e.g. "1 0" instead of "10"). We capture each group of digits and
+# concatenate them at match time.
+_MARKS_RE = re.compile(
+    r"\b(\d{1,2}(?:\s+\d{1,2})?)\s*marks?\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_marks(s: str) -> int | None:
+    """Parse a marks string like '10', '1 0', '5' into an int.
+
+    Returns None if the string has no digits.
+    """
+    digits = "".join(c for c in s if c.isdigit())
+    return int(digits) if digits else None
+
+
+def detect_section_marks(pages: list[dict]) -> list[dict]:
+    """Walk the pages and return per-page {section, marks} context.
+
+    The detector uses two regexes:
+
+    - ``_SECTION_HEADER_RE`` finds "SECTION A", "Section B – Long Answer"
+      etc. and updates the current section letter. OCR-garbled text
+      concatenates section headers with surrounding text (e.g.
+      "Key:a SECTION BModified..."), so we use a non-consuming
+      approach: find all "section" positions, then look at the next
+      non-space char.
+    - ``_MARKS_RE`` finds "10 marks" / "5 marks" in the same line as the
+      section header and updates the current marks value.
+
+    The function is tolerant of OCR garbage and missing markers: if a
+    page has no markers, the previously-seen section/marks is used.
+
+    Args:
+        pages: list of Stage 2.2 page dicts (page_num, text, ...).
+
+    Returns:
+        list of dicts, one per page, with keys:
+            - ``page_num``: int
+            - ``section``: str | None  (e.g. "A", "B", "C", "D")
+            - ``marks``: int | None    (e.g. 5, 10)
+    """
+    out: list[dict] = []
+    cur_section: str | None = None
+    cur_marks: int | None = None
+    for page in pages:
+        text = page.get("text", "") or ""
+        # Update section: find all "section" substrings and look at the
+        # next non-space char for the section letter.
+        for m in re.finditer(r"section", text, re.IGNORECASE):
+            rest = text[m.end():].lstrip()
+            if rest and rest[0].isalpha() and rest[0].isupper():
+                cur_section = rest[0]
+                # Don't break — continue looking for more section headers
+                # in the same page (unusual but possible).
+        # Update marks if a marks indicator is found anywhere in the page.
+        # (Most modules list the marks next to the section header, but some
+        # put it in the section description like "Long Answer — 10 marks".)
+        marks_matches = _MARKS_RE.findall(text)
+        if marks_matches:
+            # Take the LAST marks value on the page (most specific to the
+            # current section, since later paragraphs describe the current
+            # section's questions). Each match may be "10" or "1 0" (OCR-
+            # garbled) — _parse_marks concatenates the digits.
+            for m in reversed(marks_matches):
+                parsed = _parse_marks(m)
+                if parsed:
+                    cur_marks = parsed
+                    break
+        out.append({
+            "page_num": page.get("page_num", 0),
+            "section": cur_section,
+            "marks": cur_marks,
+        })
+    return out
+
+
+def annotate_questions_with_marks(
+    questions: list[ExtractedQuestion],
+    page_context: list[dict],
+) -> list[ExtractedQuestion]:
+    """Set each question's ``marks`` and ``section`` from the page context.
+
+    The ``page_context`` is the output of :func:`detect_section_marks`. For
+    each question, we look up the context for its ``page_num`` and copy
+    the ``marks`` and ``section`` onto the question.
+
+    MCQ questions (no options, or ``type == "mcq"``) get ``marks=None``
+    even if the page context has marks — the marks apply only to theory
+    questions on the same page.
+    """
+    ctx_by_page = {ctx["page_num"]: ctx for ctx in page_context}
+    for q in questions:
+        ctx = ctx_by_page.get(q.page_num)
+        if ctx is None:
+            continue
+        q.section = ctx.get("section")
+        if q.type == "mcq":
+            q.marks = None
+        else:
+            q.marks = ctx.get("marks")
+    return questions
