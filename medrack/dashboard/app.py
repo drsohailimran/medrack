@@ -322,7 +322,14 @@ def _list_modules_handler() -> list[list[str]]:
     when no modules are ingested.
     """
     rows: list[list[str]] = []
-    for subject, name in list_modules():
+    for mod in list_modules():
+        # list_modules() can return either list[dict] (production) or
+        # list[tuple] (per the brief's test fixture). Normalize both.
+        if isinstance(mod, tuple):
+            subject, name = mod[0], mod[1]
+        else:
+            subject = mod.get("subject") or mod.get("subject_code") or "?"
+            name = mod.get("name") or mod.get("module_name") or "?"
         ext_path = module_dir(subject, name) / "extracted.json"
         if ext_path.is_file():
             data = json.loads(ext_path.read_text())
