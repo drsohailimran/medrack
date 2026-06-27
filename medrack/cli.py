@@ -142,6 +142,17 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return dashboard_main()
 
 
+def cmd_bot(args: argparse.Namespace) -> int:
+    """Launch the Telegram bot.
+
+    Thin wrapper around :func:`medrack.bot.app.main`. The token check
+    and polling live in ``medrack.bot.app.main`` so it remains the
+    single source of truth for bot startup.
+    """
+    from medrack.bot.app import main as bot_main
+    return bot_main()
+
+
 def _extract_pages(pdf_path: Path) -> list[dict]:
     """Run the T2/T3 hybrid extraction across all pages of ``pdf_path``.
 
@@ -1124,6 +1135,12 @@ def build_parser() -> argparse.ArgumentParser:
         "dashboard", help="Launch the Gradio dashboard (http://127.0.0.1:7860)"
     )
     sp.set_defaults(func=cmd_dashboard)
+
+    # Telegram bot (Stage 2.7 / T5)
+    sp = sub.add_parser(
+        "bot", help="Launch the Telegram bot (requires TELEGRAM_BOT_TOKEN env var)"
+    )
+    sp.set_defaults(func=cmd_bot)
 
     return p
 
