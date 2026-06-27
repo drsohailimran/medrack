@@ -93,6 +93,12 @@ HELP_TEXT = """\
 
 
 async def cmd_start(update, context):
+    import logging
+    logging.getLogger("medrack.bot").info(
+        "cmd_start from chat_id=%s user=%s",
+        update.effective_chat.id if update.effective_chat else "?",
+        update.effective_user.username if update.effective_user else "?",
+    )
     await update.message.reply_text(WELCOME_TEXT)
 
 
@@ -311,6 +317,16 @@ def main() -> int:
     if not token:
         print("ERROR: $MEDRACK_TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
         return 2
+    # Configure logging so we can see what the bot is doing in the journal.
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+    )
+    # Quiet down python-telegram-bot's chatter (it logs every API call at DEBUG).
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     app = build_application(token)
     app.run_polling()
     return 0
