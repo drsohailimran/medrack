@@ -37,6 +37,17 @@ def _manifest_path() -> Path:
     return config.get_medrack_home() / "index" / "manifest.json"
 
 
+def get_manifest_path() -> Path:
+    """Public alias for :func:`_manifest_path` re-evaluating ``$MEDRACK_HOME``.
+
+    Exposed so external callers (notably the Gradio dashboard's State tab)
+    can read the current manifest path without going through the private
+    helper. The path is re-evaluated on every call so environment overrides
+    take effect immediately.
+    """
+    return _manifest_path()
+
+
 def _empty_manifest() -> dict[str, Any]:
     """Canonical empty manifest for the current schema version."""
     return {

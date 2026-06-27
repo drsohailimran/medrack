@@ -37,8 +37,17 @@ def _wire_medrack_home(request, tmp_path_factory, monkeypatch):
     test_tmp = request.getfixturevalue("tmp_path")
     # Ensure the standard subdirs exist so cache/manifest helpers don't
     # surprise the test with auto-created paths the test didn't expect.
+    #
+    # NOTE: ``index/`` is intentionally NOT pre-created here. Some tests
+    # (notably the dashboard State-tab tests) need to ``mkdir`` the index
+    # directory themselves to verify the read-only manifest handler.
+    # Pre-creating it here would break ``Path.mkdir(parents=True)`` on
+    # an existing leaf directory (no ``exist_ok``). ChromaDB's
+    # ``PersistentClient`` creates ``index/chroma`` lazily on first
+    # write, so the only call site that needs the dir pre-created is
+    # ``medrack.tests.test_answer_generate`` which already does its own
+    # ``mkdir(parents=True, exist_ok=True)``.
     monkeypatch.setenv("MEDRACK_HOME", str(test_tmp))
     (test_tmp / "answers").mkdir(parents=True, exist_ok=True)
-    (test_tmp / "index" / "chroma").mkdir(parents=True, exist_ok=True)
     (test_tmp / "modules").mkdir(parents=True, exist_ok=True)
     (test_tmp / "state").mkdir(parents=True, exist_ok=True)
