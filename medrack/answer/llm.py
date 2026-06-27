@@ -6,6 +6,7 @@ in order, with exponential backoff per model.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 
@@ -96,7 +97,14 @@ class LLMClient:
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(timeout=self.timeout)
+            # The OpenCode Go API expects `x-api-key: $OPENCODE_ZEN_API_KEY`.
+            # Read it from the env at client-init time (not at __init__ time,
+            # so MEDRACK_HOME / load_dotenv() hooks work).
+            headers = {"Content-Type": "application/json"}
+            api_key = os.environ.get("OPENCODE_ZEN_API_KEY")
+            if api_key:
+                headers["x-api-key"] = api_key
+            self._client = httpx.Client(timeout=self.timeout, headers=headers)
         return self._client
 
     def _try_once(self, model: str, prompt: str) -> LLMResponse:
