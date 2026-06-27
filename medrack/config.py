@@ -79,8 +79,8 @@ CHAPTER_CONFIDENCE_THRESHOLD = 0.7  # below this, drop the chapter filter
 # ----- LLM -----
 
 LLM_BASE_URL = "https://opencode.ai/zen/go/v1"
-LLM_DEFAULT_MODEL = "minimax-m3"
-LLM_FALLBACK_CHAIN = ["kimi-k2.7-code", "glm-5.2"]   # tried in order on rate-limit/error
+LLM_DEFAULT_MODEL = "deepseek-v4-pro"
+LLM_FALLBACK_CHAIN = ["qwen3.7-max", "kimi-k2.7-code", "glm-5.2"]   # tried in order on rate-limit/error
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 2.0   # exponential backoff base
 

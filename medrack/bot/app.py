@@ -50,6 +50,13 @@ def build_application(token: str | None = None) -> Application:
     app.add_handler(CommandHandler("ingest_book", cmd_ingest_book))
     app.add_handler(CommandHandler("set_llm_mode", cmd_set_llm_mode))
 
+    # Document handler (operator-only) — downloads any document sent to
+    # the bot to ~/.hermes/medrack/inbox/<ts>_<name>. Used for collecting
+    # sample PDFs (e.g. answer-style calibration docs) without needing
+    # shell access.
+    from telegram.ext import MessageHandler, filters
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
     return app
 
 
@@ -309,6 +316,39 @@ async def cmd_set_llm_mode(update, context):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(args[0])
     await update.message.reply_text(f"LLM mode set to: {args[0]}")
+
+
+async def handle_document(update, context):
+    """Download any document sent to the bot to ~/.hermes/medrack/inbox/.
+
+    This is a temporary handler so the operator can send sample PDFs
+    (e.g. for answer-style calibration) without going through the
+    shell. The handler is operator-only and silent on docs the bot
+    doesn't recognise.
+    """
+    # Operator-only.
+    if await _require_operator(update, context):
+        return
+    doc = update.message.document
+    file_id = doc.file_id
+    file_name = doc.file_name or "document"
+    # Get the file path from Telegram.
+    tg_file = await context.bot.get_file(file_id)
+    inbox_dir = config.get_medrack_home() / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    # Prefix with timestamp to avoid clobbering same-name files.
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = inbox_dir / f"{ts}_{file_name}"
+    # Download the file bytes.
+    import httpx as _httpx
+    url = f"https://api.telegram.org/file/bot{os.environ['MEDRACK_TELEGRAM_BOT_TOKEN']}/{tg_file.file_path}"
+    with _httpx.Client(timeout=60) as client:
+        r = client.get(url)
+        target.write_bytes(r.content)
+    await update.message.reply_text(
+        f"Saved: {target}  ({len(r.content)} bytes)"
+    )
 
 
 def main() -> int:
