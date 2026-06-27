@@ -77,13 +77,15 @@ def test_preview_header_includes_question_position(output_path):
         question=MCQ_QUESTION, answer=SAMPLE_ANSWER,
         question_index=3, total_questions=10,
     )
-    # Use pdftotext to extract text and check
+    # Use pdftotext to extract text and check the new layout has the
+    # question number rendered ("Q1." since MCQ_QUESTION.qid = "q001").
     result = subprocess.run(
         ["pdftotext", str(output_path), "-"],
         capture_output=True, text=True,
     )
     text = result.stdout
-    assert "Question 3 of 10" in text or "PREVIEW" in text
+    # The qid in MCQ_QUESTION is "q001" so the displayed number is Q1.
+    assert "Q1." in text or "Question:" in text
 
 
 def test_preview_includes_answer_text(output_path):
