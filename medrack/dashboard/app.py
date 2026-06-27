@@ -451,8 +451,12 @@ def _list_cached_answers() -> list[list[str]]:
 def main() -> int:
     """Launch the dashboard. CLI entry point for `medrack dashboard`."""
     demo = build_dashboard()
+    # Bind to 0.0.0.0 so the dashboard is reachable from the local network
+    # (and via Tailscale at 100.74.196.11). Originally was 127.0.0.1 which
+    # only worked when accessing from the same host. Per operator request
+    # so the dashboard can be opened from the Windows 11 PC.
     demo.launch(
-        server_name="127.0.0.1",
+        server_name="0.0.0.0",
         server_port=7860,
         share=False,
         theme=gr.themes.Soft(),
