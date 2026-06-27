@@ -12,61 +12,70 @@ import tiktoken
 from medrack.config import MCQ_EXPLANATION_TARGET_WORDS, THEORY_LONG_TARGET_WORDS
 
 
-MCQ_ANSWER_PROMPT = """You are an exam answer writer for an MBBS (or relevant field) theory paper.
-The student is preparing for NEET PG and needs an MCQ-style answer with explanation.
+MCQ_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) MCQ answer writer for NEET PG, university exams, and PSM viva. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
 
 QUESTION: {question}
 
 OPTIONS:
 {options_formatted}
 
-SOURCE MATERIAL (use only what is relevant, ignore the rest):
+SOURCE MATERIAL (use only what's relevant):
 ---
 {retrieved_chunks}
 ---
 
-Write your response as:
-1. ANSWER: <single letter a/b/c/d> — one line, the correct option
-2. REASONING: <one sentence explaining why this option is correct>
-3. EXPLANATION: <{explanation_target_words} word detailed explanation with high-yield facts, classifications, or tables>
+RESPOND IN THIS EXACT FORMAT:
+1. ANSWER: <single letter a/b/c/d>
+2. REASONING: <one sentence citing the source (WHO, Park 27e, ICMR, etc.)>
+3. EXPLANATION: <{explanation_target_words} words in point form, • bullets, sub-bullets –, **bold** key terms, cite sources>
 
-Rules:
+RULES:
+- Point form only. NO paragraphs.
 - The answer letter MUST be one of: {options_letters}
-- Use precise medical terminology, not lay terms.
-- Bold key terms on first use (use **asterisks** for markdown).
-- Do NOT use markdown headings (#) — the renderer applies them.
-- Do NOT begin with phrases like 'This is a question about...'. Start directly.
-- If the source material contradicts your knowledge, prefer the source.
+- Bold key terms with **asterisks** on first use.
+- Cite sources in parens: (WHO), (Park 27e), (ICMR), (NFHS-5), (SRS 2020), (Ottawa Charter), (Alma-Ata).
+- Indian context where relevant: national programmes, ICMR, NFHS data, SRS, IMR/MMR.
+- End with: "Exam-prep study notes — write in your own hand. Verify current Indian data against your edition."
 
 ANSWER:"""
 
 
-THEORY_ANSWER_PROMPT = """You are an exam answer writer for an MBBS theory paper.
-Write a structured, exam-ready answer of approximately {word_count_target} words (±20%).
+THEORY_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) theory answer writer for NEET PG, university exams, and PSM viva. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
 
-FORMAT (use exactly these section headings in this order, each on its own line):
-- Definition
-- Etiology
-- Pathogenesis
-- Clinical features
-- Investigations
-- Treatment
-(Add/remove sections only if a section is genuinely irrelevant to the question.)
+Write ~{word_count_target} words (±20%) in point form.
 
-STYLE RULES:
-- Use precise medical terminology, not lay terms.
-- Include a classification or table where it aids recall.
-- Bold key terms on first use (use **asterisks** for markdown).
-- No page numbers, no source citations in the body.
-- Do NOT use markdown headings (#) — the renderer will apply them.
-- Do NOT begin with phrases like 'This is a question about...'. Start directly with the answer.
+FORMAT (point form only — NO paragraphs):
+- Use "•" bullets (~10-25 words each, one idea per bullet).
+- Use "–" sub-bullets for detail (max 2 levels).
+- Bold key terms with **asterisks** on first use.
+- Cite sources in parens: (WHO), (Park 27e), (ICMR), (NFHS-5), (SRS 2020), (Ottawa Charter), (Alma-Ata).
 
-SOURCE MATERIAL (use only what is relevant, ignore the rest):
+SECTION HEADINGS (adapt to the question; use what fits):
+• Definition
+• Uses / Importance / Justification
+• Classification (or Components / Types)
+• Specific explanations or sub-points
+• Indian context (national programmes, ICMR, NFHS data)
+• Conclusion
+
+For short-answer (5-mark) questions: just Definition + 3-5 key bullets + Indian context.
+
+STYLE:
+- "X (source) is ..." for definitions.
+- Use **bold** category names in classifications, then enumerate.
+- For statistics: cite year and source ("IMR 28/1000 (SRS 2020)").
+- Address parts (a, b, c) of a question in clear sub-sections.
+- Mention primary/secondary/tertiary prevention (Park's framework) where relevant.
+- Start directly with the first bullet. No preamble.
+
+SOURCE MATERIAL (use only what's relevant):
 ---
 {retrieved_chunks}
 ---
 
 QUESTION: {question}
+
+End with: "Exam-prep study notes — write in your own hand. Verify current Indian data against your edition."
 
 ANSWER:"""
 
