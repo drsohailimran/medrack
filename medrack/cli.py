@@ -6,12 +6,16 @@ Stage 2.1 added `init`, `status`, `version`. Stage 2.2 / T10 adds
 (T1 format detection → T9 quality gate). Stage 2.3 / M6 adds
 `ingest-module`, the end-to-end orchestrator for the module question
 ingest pipeline (M1 module text extract → M5 module storage).
+Stage 2.5 / B3 wires `medrack approve` to the batch orchestrator and
+full PDF renderer, and adds the ``$MEDRACK_LLM_MODE=mock`` toggle that
+swaps in ``MockLLMClient`` for offline / test runs.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -435,6 +439,32 @@ def _clear_preview_state() -> None:
         pass
 
 
+def _get_llm_client():
+    """Return an LLM client honouring the ``$MEDRACK_LLM_MODE`` env var.
+
+    - ``mock`` (or any value starting with ``mock``) -> :class:`MockLLMClient`
+      (deterministic, no network — used by the end-to-end tests and the
+      Stage 2.5 B3 integration test that exercises the full
+      ingest → preview → approve → PDF flow without an API key).
+    - ``real`` or unset -> :class:`LLMClient` (default production path).
+
+    The helper lives at module scope so both ``cmd_preview`` and
+    ``cmd_approve`` can use the same selection logic, keeping the
+    "switchable client" promise a one-liner everywhere it's needed.
+
+    Return type is intentionally un-annotated (``object``) because
+    ``MockLLMClient`` is a structural stand-in (same ``complete()``
+    surface) rather than a subclass of ``LLMClient``; down-stream
+    callers in this module are duck-typed.
+    """
+    mode = os.environ.get("MEDRACK_LLM_MODE", "real").lower()
+    if mode == "mock":
+        from medrack.answer.llm import MockLLMClient
+        return MockLLMClient()
+    from medrack.answer.llm import LLMClient
+    return LLMClient()
+
+
 def _append_revision(record: dict) -> None:
     """Append a revision record to revisions.json (atomic, list-of-dicts)."""
     path = _revisions_path()
@@ -492,7 +522,6 @@ def cmd_preview(args: argparse.Namespace) -> int:
     # only need argparse rejection — they never reach the imports.
     from medrack.answer.generate import generate_answer
     from medrack.answer.render import render_preview_pdf
-    from medrack.answer.llm import LLMClient
     from medrack.module.storage import load_extracted
 
     # 1. Subject — either explicit or read from extracted.json metadata.
@@ -552,7 +581,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
     chapter_name = chapter_arg if chapter_arg else "all"
 
     # 4. LLM client + answer generation.
-    client = LLMClient()
+    client = _get_llm_client()
     try:
         answer_dict = generate_answer(
             module_name=module_name,
@@ -624,27 +653,180 @@ def cmd_preview(args: argparse.Namespace) -> int:
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
-    """Approve the last preview and (in Stage 2.5) generate the rest.
+    """Approve the last preview and generate the full batch (Stage 2.5 B3).
 
-    For Stage 2.4 / Task A6 this only records the approval and clears
-    the preview state. The full batch generation arrives in Stage 2.5.
+    Pipeline:
+        1. Load preview state (set by ``medrack preview``). If missing,
+           error out with exit 2.
+        2. Load the module's ``extracted.json`` (questions + metadata).
+        3. Resolve the question scope: every question in the module
+           (Stage 2.5 prototype, regardless of the chapter filter on the
+           preview — the brief's "all remaining questions" semantic).
+        4. Build the LLM client (real or mock via ``$MEDRACK_LLM_MODE``).
+        5. Call :func:`medrack.answer.batch.generate_full_batch` over the
+           full question list. Per-question cache hits skip the LLM.
+        6. Render the full module PDF via
+           :func:`medrack.answer.render_full.render_full_module_pdf`.
+        7. Persist ``state/batch_state.json`` atomically (schema per the
+           Stage 2.5 brief).
+        8. Print a summary to stdout (path, counts, time, tokens).
+        9. Clear the preview state (terminal step — the batch is done).
 
     Exit codes:
-        0 — approval recorded (or already cleared; idempotent)
+        0 — batch generated, PDF written, state persisted
         2 — no preview state to approve
+        5 — downstream failure (module missing, batch / render / write
+            error)
     """
+    # 1. Load preview state.
     state = _load_preview_state()
     if not state or "last_preview" not in state:
-        print("ERROR: no preview to approve (run `medrack preview ...` first)", file=sys.stderr)
+        print(
+            "ERROR: no preview to approve (run `medrack preview ...` first)",
+            file=sys.stderr,
+        )
         return 2
 
     last = state["last_preview"]
-    module = last.get("module", "?")
-    qid = last.get("qid", "?")
-    print(
-        f"Approval recorded for {module} / {qid}. "
-        f"Full batch generation will be implemented in Stage 2.5."
+    module_name = last.get("module")
+    subject = last.get("subject")
+    chapter_from_preview = last.get("chapter", "all")
+
+    if not module_name or not subject:
+        print(
+            "ERROR: preview state is missing module/subject — "
+            "re-run `medrack preview ...` to refresh it",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Lazy imports — keep the CLI importable even when the batch
+    # orchestrator (B1) or full renderer (B2) isn't on disk yet.
+    from medrack.answer.batch import generate_full_batch
+    from medrack.answer.render_full import render_full_module_pdf
+    from medrack.module.storage import load_extracted
+
+    # 2. Load the module's extracted questions.
+    data = load_extracted(subject, module_name)
+    if data is None:
+        print(
+            f"ERROR: module {module_name!r} not found for subject {subject!r} "
+            f"(re-run `medrack ingest-module ... --name {module_name}` first)",
+            file=sys.stderr,
+        )
+        return 5
+    questions: list[dict] = data.get("questions", [])
+    if not questions:
+        print(
+            f"ERROR: module {module_name!r} has no extracted questions",
+            file=sys.stderr,
+        )
+        return 5
+
+    # 3. Build the LLM client (real or mock).
+    client = _get_llm_client()
+
+    # 4. Run the batch over the module's full question list.
+    # Stage 2.5 prototype: no per-chapter filtering yet — the preview
+    # state records the chapter but the brief says "ALL remaining
+    # questions in the module" for the first cut. We still surface
+    # the chapter in the batch state for downstream filtering.
+    chapter_filter = (
+        None
+        if not chapter_from_preview or chapter_from_preview == "all"
+        else chapter_from_preview
     )
+    try:
+        batch = generate_full_batch(
+            module_name=module_name,
+            subject=subject,
+            questions=questions,
+            llm_client=client,
+            chapter_filter=chapter_filter,
+        )
+    except Exception as exc:  # noqa: BLE001 — keep the CLI user-facing
+        logger.exception("generate_full_batch failed for %s/%s", subject, module_name)
+        print(f"ERROR: batch generation failed: {exc}", file=sys.stderr)
+        return 5
+
+    # 5. Build the output path and render the full module PDF.
+    output_dir = config.DATA_DIRS["output"] / module_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"{timestamp}_full.pdf"
+
+    try:
+        render_full_module_pdf(
+            output_path,
+            module_name=module_name,
+            subject=subject,
+            batch_result=batch,
+            answers=batch.answers,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("render_full_module_pdf failed for %s", module_name)
+        print(f"ERROR: full PDF rendering failed: {exc}", file=sys.stderr)
+        return 5
+
+    # 6. Persist the batch state atomically.
+    per_question: list[dict] = []
+    for ans in batch.answers:
+        per_question.append({
+            "qid": ans.get("qid"),
+            "cache_hit": bool(ans.get("cache_hit", False)),
+            "tokens": int(ans.get("total_tokens", 0) or 0),
+            "latency": float(ans.get("latency_seconds", 0.0) or 0.0),
+        })
+
+    batch_state = {
+        "module": module_name,
+        "subject": subject,
+        "chapters": list(batch.chapters) if batch.chapters else (
+            [chapter_from_preview] if chapter_from_preview else ["all"]
+        ),
+        "questions_total": batch.questions_total,
+        "questions_generated": batch.questions_generated,
+        "questions_cached": batch.questions_cached,
+        "questions_failed": batch.questions_failed,
+        "total_tokens": batch.total_tokens,
+        "total_latency_seconds": batch.total_latency_seconds,
+        "elapsed_seconds": batch.elapsed_seconds,
+        "output_pdf": str(output_path),
+        "per_question": per_question,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state_dir = config.get_medrack_home() / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "batch_state.json"
+    try:
+        _atomic_write_json(state_path, batch_state)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Could not write batch state to %s", state_path)
+        print(
+            f"ERROR: could not write batch state: {exc}",
+            file=sys.stderr,
+        )
+        return 5
+
+    # 7. Print the summary. Tests assert on `output_pdf` being the path
+    #    AND on stdout; we keep it line-oriented for greppability.
+    print(f"Batch complete for {module_name} [{subject}]")
+    print(
+        f"  questions_total:      {batch.questions_total}"
+    )
+    print(
+        f"  questions_generated:  {batch.questions_generated}  "
+        f"(cached: {batch.questions_cached}, failed: {batch.questions_failed})"
+    )
+    print(
+        f"  total_tokens:         {batch.total_tokens}  "
+        f"(elapsed: {batch.elapsed_seconds:.1f}s)"
+    )
+    print(f"  output_pdf:           {output_path}")
+    print(f"  batch_state:          {state_path}")
+
+    # 8. Clear the preview state — the batch is done, the user has
+    #    the PDF; the next preview will write a fresh state.
     _clear_preview_state()
     return 0
 

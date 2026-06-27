@@ -248,12 +248,14 @@ def generate_answer(
     llm_response = llm_client.complete(build_result.prompt)
 
     # Build the cache key (so Stage 2.5 can detect template/model drift).
+    # Use getattr with a default in case the client doesn't expose `.model`
+    # (e.g. MockLLMClient in tests).
     cache_key = cache_key_for_question(
         module_name=module_name,
         qid=qid,
         question_text=question_text,
         prompt_template=system_template,
-        model=llm_client.model,
+        model=getattr(llm_client, "model", "unknown"),
     )
 
     # Step 6: assemble the answer dict, save to cache, return.

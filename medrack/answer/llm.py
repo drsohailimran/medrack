@@ -35,6 +35,41 @@ class LLMUnavailableError(Exception):
     pass
 
 
+class MockLLMClient:
+    """Deterministic LLM client for tests and offline runs.
+
+    Mirrors the ``LLMClient`` surface (``complete(prompt) -> LLMResponse``)
+    but never touches the network — every prompt gets a canned response.
+    Used when ``$MEDRACK_LLM_MODE=mock`` (selected by the CLI in
+    ``cmd_approve`` and the test fixtures) so end-to-end flows can run
+    without a real ``OPENCODE_ZEN_API_KEY``.
+    """
+
+    def __init__(self) -> None:
+        # No state needed — the response is purely a function of the
+        # prompt (deterministic) and the canned token/latency constants
+        # below.
+        pass
+
+    def complete(self, prompt: str) -> LLMResponse:
+        """Return a deterministic canned response for any prompt.
+
+        The answer text embeds the first 50 chars of the prompt so the
+        output is traceable back to the question (helpful in test
+        assertions and PDF debugging). Token counts and latency are
+        fixed so total-tokens / total-latency accounting in the batch
+        orchestrator stays predictable.
+        """
+        return LLMResponse(
+            text=f"MOCK ANSWER ({prompt[:50]})",
+            prompt_tokens=500,
+            completion_tokens=100,
+            total_tokens=600,
+            model="mock",
+            latency_seconds=0.1,
+        )
+
+
 class LLMClient:
     """Thin wrapper over the LLM HTTP API with retry + fallback."""
 
