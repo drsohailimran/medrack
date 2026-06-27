@@ -66,7 +66,9 @@ class LLMClient:
 
     def _try_once(self, model: str, prompt: str) -> LLMResponse:
         """Single attempt against one model. Raises on HTTP error."""
-        url = f"{self.base_url}/v1/messages"
+        # base_url is `https://opencode.ai/zen/go/v1` (already includes /v1),
+        # so the messages endpoint is just `/messages`.
+        url = f"{self.base_url}/messages"
         body = {
             "model": model,
             "max_tokens": 4096,

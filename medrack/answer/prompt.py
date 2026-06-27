@@ -6,7 +6,6 @@ sections "Prompt template — MCQ" and "Prompt template — Theory".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import tiktoken
 
