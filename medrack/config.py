@@ -29,6 +29,7 @@ DATA_DIRS = {
     "scripts": HOME / "scripts",
     "references": HOME / "references",
     "package": HOME / "medrack",
+    "state": HOME / "state",
 }
 
 # ----- Subjects (locked from the plan, 10 subjects, MBBS 3rd/final year) -----

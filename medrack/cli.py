@@ -374,6 +374,333 @@ _KEBAB_CASE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LLM_FALLBACK_COVERAGE = 0.5
 
 
+# ---------------------------------------------------------------------------
+# Preview state machine (Stage 2.4 / Task A6)
+#
+# The preview flow is a 4-state interaction between the user and the LLM:
+#
+#     [no state]  -- preview -->  [previewing]
+#     [previewing] -- approve -->  [approved]  (clears state)
+#     [previewing] -- revise  -->  [previewing] (records revision)
+#     [previewing] -- cancel  -->  [no state]  (clears state)
+#     [*]         -- cancel  -->  [no state]  (always succeeds)
+#
+# The state lives in ``<HOME>/state/preview_state.json`` (atomic JSON
+# write) and the revision log in ``<HOME>/state/revisions.json`` (atomic
+# JSON list, append-only). Both paths are re-evaluated on every call via
+# ``config.get_medrack_home()`` so ``$MEDRACK_HOME`` overrides work in
+# tests, mirroring the pattern in ``medrack.ingest.manifest``.
+# ---------------------------------------------------------------------------
+
+def _state_path() -> Path:
+    """Return the path to the preview state JSON file (parent dir created)."""
+    p = config.get_medrack_home() / "state" / "preview_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _revisions_path() -> Path:
+    """Return the path to the revisions log JSON file (parent dir created)."""
+    p = config.get_medrack_home() / "state" / "revisions.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    """Write ``data`` to ``path`` atomically (tmp + replace)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=False))
+    tmp.replace(path)
+
+
+def _load_preview_state() -> dict | None:
+    """Load the preview state file, or ``None`` if missing."""
+    path = _state_path()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        # Treat a corrupt state file as "no preview" — safer than crashing
+        # the user-facing CLI.
+        return None
+
+
+def _clear_preview_state() -> None:
+    """Delete the preview state file if it exists. Silent no-op otherwise."""
+    path = _state_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _append_revision(record: dict) -> None:
+    """Append a revision record to revisions.json (atomic, list-of-dicts)."""
+    path = _revisions_path()
+    if path.exists():
+        try:
+            current = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            current = []
+    else:
+        current = []
+    if not isinstance(current, list):
+        current = []
+    current.append(record)
+    _atomic_write_json(path, current)
+
+
+def _resolve_chapter_from_questions(
+    questions: list[dict], chapter_arg: str
+) -> dict:
+    """Pick a question from the module given the (prototype) chapter filter.
+
+    For Stage 2.4 the brief accepts a simplified contract: any
+    ``--chapter`` value falls back to "first question in the module".
+    This keeps the prototype working while the real per-chapter
+    scoping lands in Stage 2.5.
+    """
+    if not questions:
+        return {}
+    return questions[0]
+
+
+def cmd_preview(args: argparse.Namespace) -> int:
+    """Generate a preview answer for the first question in the module.
+
+    Pipeline (Stage 2.4 / Task A6):
+        1. Resolve subject (from --subject or from extracted.json metadata).
+        2. Load the module's extracted.json.
+        3. Pick the first question in the module (prototype behaviour).
+        4. Build an LLMClient and call generate_answer().
+        5. Render the preview PDF to <output>/<module>/<ts>_preview_<qid>.pdf.
+        6. Save preview state atomically.
+        7. Print the PDF path, the question, a truncated answer, and a
+           reminder of the approve/revise workflow.
+
+    Exit codes:
+        0 — preview PDF rendered successfully
+        2 — module not found / subject not provided and not in metadata
+        5 — downstream failure (LLM, renderer, etc.)
+    """
+    module_name = args.module
+    chapter_arg = args.chapter  # e.g. "chapter 1" or "all"
+
+    # Lazy imports so that this module can be imported (and CLI loaded)
+    # even when A5 (generate.py) has not yet landed. The error-path tests
+    # only need argparse rejection — they never reach the imports.
+    from medrack.answer.generate import generate_answer
+    from medrack.answer.render import render_preview_pdf
+    from medrack.answer.llm import LLMClient
+    from medrack.module.storage import load_extracted
+
+    # 1. Subject — either explicit or read from extracted.json metadata.
+    subject = args.subject
+    if not subject:
+        # Try to find the module under any subject directory.
+        modules_root = config.get_medrack_home() / "modules"
+        candidates: list[str] = []
+        if modules_root.exists():
+            for subj_dir in modules_root.iterdir():
+                if subj_dir.is_dir() and (subj_dir / module_name / "extracted.json").exists():
+                    candidates.append(subj_dir.name)
+        if not candidates:
+            print(
+                f"ERROR: cannot find module {module_name!r} in any subject "
+                f"(set --subject explicitly or run `medrack init` first)",
+                file=sys.stderr,
+            )
+            return 2
+        if len(candidates) > 1:
+            print(
+                f"ERROR: module {module_name!r} exists under multiple subjects "
+                f"({', '.join(candidates)}); pass --subject explicitly",
+                file=sys.stderr,
+            )
+            return 2
+        subject = candidates[0]
+
+    # 2. Load the module.
+    data = load_extracted(subject, module_name)
+    if data is None:
+        print(
+            f"ERROR: module {module_name!r} not found for subject {subject!r} "
+            f"(run `medrack ingest-module ... --name {module_name}` first)",
+            file=sys.stderr,
+        )
+        return 2
+
+    questions = data.get("questions", [])
+    if not questions:
+        print(
+            f"ERROR: module {module_name!r} has no extracted questions",
+            file=sys.stderr,
+        )
+        return 5
+
+    # 3. Pick the first question (prototype behaviour for Stage 2.4).
+    if chapter_arg and chapter_arg != "all":
+        # The real per-chapter scoping lands in Stage 2.5. For now, just
+        # signal that we're falling back to "first question" so the
+        # operator knows the chapter filter is informational only.
+        print(
+            f"Using first question in module (chapter filter "
+            f"{chapter_arg!r} is informational in Stage 2.4 prototype)"
+        )
+    question = _resolve_chapter_from_questions(questions, chapter_arg)
+    chapter_name = chapter_arg if chapter_arg else "all"
+
+    # 4. LLM client + answer generation.
+    client = LLMClient()
+    try:
+        answer_dict = generate_answer(
+            module_name=module_name,
+            subject=subject,
+            chapter=chapter_name,
+            question=question,
+            llm_client=client,
+            force_regenerate=args.reanswer,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("generate_answer failed for %s/%s", subject, module_name)
+        print(f"ERROR: answer generation failed: {exc}", file=sys.stderr)
+        return 5
+
+    # 5. Render the preview PDF.
+    output_dir = config.get_medrack_home() / "output" / module_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"{timestamp}_preview_{question['qid']}.pdf"
+    try:
+        render_preview_pdf(
+            output_path,
+            module_name=module_name,
+            module_subject=subject,
+            question=question,
+            answer=answer_dict,
+            question_index=1,
+            total_questions=len(questions),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("render_preview_pdf failed for %s", module_name)
+        print(f"ERROR: PDF rendering failed: {exc}", file=sys.stderr)
+        return 5
+
+    # 6. Save preview state atomically.
+    state = {
+        "last_preview": {
+            "module": module_name,
+            "subject": subject,
+            "chapter": chapter_name,
+            "qid": question["qid"],
+            "pdf_path": str(output_path),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    }
+    try:
+        _atomic_write_json(_state_path(), state)
+    except Exception as exc:  # noqa: BLE001
+        # State persistence is best-effort; the PDF is the actual deliverable.
+        logger.warning("Could not save preview state: %s", exc)
+
+    # 7. Print the result and the workflow reminder.
+    print(f"Preview rendered: {output_path}")
+    print()
+    print(f"Question ({question['qid']}): {question.get('question_text', '')}")
+    print()
+    answer_text = answer_dict.get("answer_text", "")
+    if len(answer_text) > 500:
+        answer_preview = answer_text[:500] + "..."
+    else:
+        answer_preview = answer_text
+    print(f"Answer:\n{answer_preview}")
+    print()
+    print(
+        f"Reply with `medrack approve` to generate the rest, or "
+        f"`medrack revise wordcount 1500` to change the format."
+    )
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """Approve the last preview and (in Stage 2.5) generate the rest.
+
+    For Stage 2.4 / Task A6 this only records the approval and clears
+    the preview state. The full batch generation arrives in Stage 2.5.
+
+    Exit codes:
+        0 — approval recorded (or already cleared; idempotent)
+        2 — no preview state to approve
+    """
+    state = _load_preview_state()
+    if not state or "last_preview" not in state:
+        print("ERROR: no preview to approve (run `medrack preview ...` first)", file=sys.stderr)
+        return 2
+
+    last = state["last_preview"]
+    module = last.get("module", "?")
+    qid = last.get("qid", "?")
+    print(
+        f"Approval recorded for {module} / {qid}. "
+        f"Full batch generation will be implemented in Stage 2.5."
+    )
+    _clear_preview_state()
+    return 0
+
+
+def cmd_revise(args: argparse.Namespace) -> int:
+    """Record a revision request for the last preview.
+
+    The revision is appended to revisions.json (atomic, list-of-dicts).
+    The full "re-run with feedback" flow lands in Stage 2.5; for now
+    this just records the request and prints a reminder.
+
+    Exit codes:
+        0 — revision recorded
+        2 — no preview state to revise
+    """
+    state = _load_preview_state()
+    if not state or "last_preview" not in state:
+        print("ERROR: no preview to revise (run `medrack preview ...` first)", file=sys.stderr)
+        return 2
+
+    axis = args.axis
+    notes = args.notes
+    last = state["last_preview"]
+    record = {
+        "module": last.get("module"),
+        "qid": last.get("qid"),
+        "axis": axis,
+        "notes": notes,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _append_revision(record)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Could not append revision")
+        print(f"ERROR: could not record revision: {exc}", file=sys.stderr)
+        return 2
+
+    module = last.get("module", "<module>")
+    print(
+        f"Revision recorded: {axis} = {notes}. "
+        f"Re-run `medrack preview {module}` with `--reanswer` to apply."
+    )
+    return 0
+
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Cancel the current preview by clearing the preview state.
+
+    Always returns 0 — cancel is idempotent and safe to run with no
+    pending preview.
+    """
+    _clear_preview_state()
+    print("Preview cancelled.")
+    return 0
+
+
 def cmd_ingest_module(args: argparse.Namespace) -> int:
     """Orchestrate the M1-M5 module question ingest pipeline on a single PDF.
 
@@ -567,6 +894,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Module format (default: auto-detect from first 5 pages)",
     )
     sp.set_defaults(func=cmd_ingest_module)
+
+    # Preview flow (Stage 2.4)
+    sp = sub.add_parser(
+        "preview",
+        help="Generate a preview answer for a question (Stage 2.4)",
+    )
+    sp.add_argument("module", help="Module name (kebab-case slug)")
+    sp.add_argument("--chapter", default="all", help="Chapter (e.g. 'chapter 1')")
+    sp.add_argument(
+        "--subject",
+        default=None,
+        help="Subject (psm, fmt, ...). If not given, read from extracted.json",
+    )
+    sp.add_argument(
+        "--reanswer",
+        action="store_true",
+        help="Force regenerate, bypass cache",
+    )
+    sp.set_defaults(func=cmd_preview)
+
+    sp = sub.add_parser(
+        "approve",
+        help="Approve the last preview, generate the rest (Stage 2.5)",
+    )
+    sp.set_defaults(func=cmd_approve)
+
+    sp = sub.add_parser(
+        "revise",
+        help="Record a revision request for the last preview",
+    )
+    sp.add_argument("axis", choices=["wordcount", "format", "quality"])
+    sp.add_argument("notes", help="Revision notes")
+    sp.set_defaults(func=cmd_revise)
+
+    sp = sub.add_parser("cancel", help="Cancel the current preview")
+    sp.set_defaults(func=cmd_cancel)
 
     return p
 
