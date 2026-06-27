@@ -100,3 +100,110 @@ def test_preview_includes_answer_text(output_path):
     text = result.stdout
     # The answer text starts with "ANSWER: d" — should appear in the PDF
     assert "d" in text  # answer letter
+
+
+# ---------------------------------------------------------------------------
+# Block parser tests (for the v2 fix that splits bullets / headings /
+# sub-bullets instead of squashing everything into one Paragraph).
+# ---------------------------------------------------------------------------
+
+from medrack.answer.render import _classify_line, _split_answer_blocks
+
+
+def test_classify_main_bullet():
+    kind, content = _classify_line("\u2022 Some bullet text (Park 27e)")
+    assert kind == "main_bullet"
+    assert "Some bullet text" in content
+    assert "(Park 27e)" in content
+
+
+def test_classify_sub_bullet_en_dash():
+    kind, content = _classify_line("  \u2013 Limitations: inapplicable to NCDs.")
+    assert kind == "sub_bullet"
+    assert "Limitations" in content
+
+
+def test_classify_sub_bullet_ascii_dash():
+    # Some LLMs emit ASCII "-" for sub-bullets; treat as sub-bullet too.
+    kind, content = _classify_line("- Limitation: small sample size.")
+    assert kind == "sub_bullet"
+
+
+def test_classify_heading_strips_markdown_hashes():
+    kind, content = _classify_line("### Bradford Hill's Criteria for Causality")
+    assert kind == "heading"
+    assert "Bradford Hill" in content
+    assert "#" not in content
+
+
+def test_classify_heading_plain():
+    kind, content = _classify_line("Definition")
+    assert kind == "heading"
+
+
+def test_classify_paragraph_long():
+    kind, content = _classify_line(
+        "This is a long sentence that should be treated as a paragraph, not a heading."
+    )
+    assert kind == "paragraph"
+
+
+def test_classify_blank():
+    kind, content = _classify_line("   ")
+    assert kind == "blank"
+    assert content == ""
+
+
+def test_split_blocks_preserves_order():
+    text = (
+        "\u2022 First bullet.\n"
+        "\u2022 Second bullet.\n"
+        "\n"
+        "Definition\n"
+        "\u2022 A definition here.\n"
+        "\n"
+        "### Evolution\n"
+        "\u2022 Henle-Koch.\n"
+    )
+    blocks = _split_answer_blocks(text)
+    kinds = [k for k, _ in blocks]
+    assert kinds == [
+        "main_bullet", "main_bullet",
+        "heading",
+        "main_bullet",
+        "heading",
+        "main_bullet",
+    ]
+    # Headings should not contain "###"
+    assert "###" not in blocks[2][1]
+    assert "###" not in blocks[4][1]
+
+
+def test_split_blocks_sub_bullet_indented():
+    text = "\u2022 Top bullet.\n  \u2013 Sub bullet one.\n  \u2013 Sub bullet two.\n"
+    blocks = _split_answer_blocks(text)
+    assert [k for k, _ in blocks] == ["main_bullet", "sub_bullet", "sub_bullet"]
+
+
+def test_render_preview_handles_markdown_heading_in_answer(tmp_path):
+    """End-to-end: an answer that includes ### headings should render
+    the heading without the ### prefix."""
+    answer_with_hash = {
+        "answer_text": (
+            "\u2022 First bullet (Park 27e).\n"
+            "\n"
+            "### Sub Topic\n"
+            "\u2022 Second bullet (WHO).\n"
+        )
+    }
+    out = tmp_path / "test_hash.pdf"
+    render_preview_pdf(
+        out, module_name="test", module_subject="psm",
+        question=MCQ_QUESTION, answer=answer_with_hash,
+        question_index=1, total_questions=1,
+    )
+    result = subprocess.run(
+        ["pdftotext", str(out), "-"], capture_output=True, text=True
+    )
+    assert "###" not in result.stdout, f"### leaked into PDF: {result.stdout!r}"
+    assert "Sub Topic" in result.stdout
