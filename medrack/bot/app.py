@@ -301,10 +301,15 @@ async def cmd_set_llm_mode(update, context):
 
 
 def main() -> int:
-    """CLI entry point: `medrack bot`."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    """CLI entry point: `medrack bot`.
+
+    Reads from $MEDRACK_TELEGRAM_BOT_TOKEN (NOT the Hermes gateway's
+    $TELEGRAM_BOT_TOKEN, which is reserved for the Hermes agent bot).
+    This lets MedRack run as a separate Telegram bot on the same host.
+    """
+    token = os.environ.get("MEDRACK_TELEGRAM_BOT_TOKEN")
     if not token:
-        print("ERROR: $TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
+        print("ERROR: $MEDRACK_TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
         return 2
     app = build_application(token)
     app.run_polling()

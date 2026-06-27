@@ -21,6 +21,6 @@ def test_bot_subcommand_registered():
 
 def test_bot_without_token_exits_nonzero():
     import os
-    env = {k: v for k, v in os.environ.items() if k != "TELEGRAM_BOT_TOKEN"}
+    env = {k: v for k, v in os.environ.items() if k != "MEDRACK_TELEGRAM_BOT_TOKEN"}
     rc, _, _ = run([MEDRACK_BIN, "bot"], env=env, timeout=10)
     assert rc != 0
