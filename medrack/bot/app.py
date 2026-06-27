@@ -10,11 +10,7 @@ type, not the string `'int'`. The `__future__` import would break that.
 Python 3.11 supports `str | None` natively, so we don't need it.
 """
 
-import json
-import os
-import sys
-from pathlib import Path
-
+import argparse
 import json
 import os
 import sys
@@ -149,10 +145,83 @@ async def cmd_status(update, context):
 # ---------------------------------------------------------------------------
 # Stubs — replaced in T3, T4
 # ---------------------------------------------------------------------------
-async def cmd_preview(update, context): pass
-async def cmd_approve(update, context): pass
-async def cmd_revise(update, context): pass
-async def cmd_cancel(update, context): pass
+async def cmd_preview(update, context):
+    """Handle /preview <module> [chapter]."""
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Usage: /preview <module> [chapter]")
+        return
+    module_name = args[0]
+    chapter = args[1] if len(args) > 1 else "all"
+    try:
+        ns = argparse.Namespace(
+            module=module_name, chapter=chapter, subject=None, reanswer=False,
+        )
+        rc = cli.cmd_preview(ns)
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    state = cli._load_preview_state()
+    if rc == 0 and state and state.get("pdf_path"):
+        from pathlib import Path
+        pdf = Path(state["pdf_path"])
+        if pdf.is_file():
+            await update.message.reply_document(
+                document=pdf.open("rb"),
+                filename=pdf.name,
+                caption=f"Preview for {module_name} (chapter: {chapter})",
+            )
+            return
+    await update.message.reply_text(f"rc={rc}")
+
+
+async def cmd_approve(update, context):
+    """Handle /approve — run the full batch."""
+    try:
+        rc = cli.cmd_approve(argparse.Namespace())
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    if rc == 0:
+        from pathlib import Path
+        state_path = config.get_medrack_home() / "state" / "batch_state.json"
+        if state_path.is_file():
+            state = json.loads(state_path.read_text())
+            output_pdf = Path(state.get("output_pdf", ""))
+            if output_pdf.is_file():
+                await update.message.reply_document(
+                    document=output_pdf.open("rb"),
+                    filename=output_pdf.name,
+                    caption=f"Full batch for {state.get('module', '?')}",
+                )
+                return
+    await update.message.reply_text(f"approved, rc={rc}")
+
+
+async def cmd_revise(update, context):
+    """Handle /revise <axis> <notes...>."""
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /revise <wordcount|format|quality> <notes>")
+        return
+    axis = args[0]
+    notes = " ".join(args[1:])
+    try:
+        rc = cli.cmd_revise(argparse.Namespace(axis=axis, notes=notes))
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    await update.message.reply_text(f"Revision recorded: {axis} = {notes}. rc={rc}")
+
+
+async def cmd_cancel(update, context):
+    """Handle /cancel — clear the preview state."""
+    try:
+        rc = cli.cmd_cancel(argparse.Namespace())
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    await update.message.reply_text(f"Preview cancelled. rc={rc}")
 
 
 # ---------------------------------------------------------------------------
