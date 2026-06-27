@@ -323,31 +323,68 @@ async def handle_document(update, context):
 
     This is a temporary handler so the operator can send sample PDFs
     (e.g. for answer-style calibration) without going through the
-    shell. The handler is operator-only and silent on docs the bot
-    doesn't recognise.
+    shell. The handler is operator-only.
     """
+    import logging
+    log = logging.getLogger("medrack.bot")
+    log.info("handle_document fired: file_name=%s file_size=%s chat_id=%s",
+             update.message.document.file_name if update.message.document else "?",
+             update.message.document.file_size if update.message.document else "?",
+             update.effective_chat.id if update.effective_chat else "?")
+
     # Operator-only.
     if await _require_operator(update, context):
         return
     doc = update.message.document
     file_id = doc.file_id
     file_name = doc.file_name or "document"
+    file_size = doc.file_size or 0
     # Get the file path from Telegram.
     tg_file = await context.bot.get_file(file_id)
+    file_path = tg_file.file_path
+    log.info("handle_document: tg_file.file_path=%s", file_path)
     inbox_dir = config.get_medrack_home() / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
     # Prefix with timestamp to avoid clobbering same-name files.
     from datetime import datetime
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     target = inbox_dir / f"{ts}_{file_name}"
-    # Download the file bytes.
+    # Download the file. file_path from getFile may be either a relative
+    # path ("documents/file_3.pdf") OR a full URL (telegram API sometimes
+    # returns the full URL). Detect and handle both.
     import httpx as _httpx
-    url = f"https://api.telegram.org/file/bot{os.environ['MEDRACK_TELEGRAM_BOT_TOKEN']}/{tg_file.file_path}"
-    with _httpx.Client(timeout=60) as client:
-        r = client.get(url)
-        target.write_bytes(r.content)
+    token = os.environ["MEDRACK_TELEGRAM_BOT_TOKEN"]
+    log.info("handle_document: token len=%d prefix=%s", len(token), token[:10])
+    if file_path.startswith("http"):
+        # Full URL — use as-is.
+        candidate_urls = [file_path]
+    else:
+        # Relative path — prepend the standard Telegram file URL prefix.
+        candidate_urls = [
+            f"https://api.telegram.org/file/bot{token}/{file_path}",
+            f"https://api.telegram.org/file/bot{token}/{file_id}/{file_path}",
+        ]
+    last_error = None
+    for url in candidate_urls:
+        log.info("handle_document: trying url=%s", url[:80])
+        try:
+            r = _httpx.get(url, timeout=60, follow_redirects=True)
+            log.info("handle_document: url=%s status=%d size=%d",
+                     url[:60], r.status_code, len(r.content))
+            if r.status_code == 200 and len(r.content) > 100 and not r.content.startswith(b"{"):
+                target.write_bytes(r.content)
+                await update.message.reply_text(
+                    f"Saved: {target}  ({len(r.content)} bytes)"
+                )
+                return
+            last_error = f"status={r.status_code} size={len(r.content)} preview={r.content[:80]!r}"
+        except Exception as exc:
+            last_error = f"exception: {exc}"
+    # All attempts failed
+    log.error("handle_document: all attempts failed. last_error=%s", last_error)
     await update.message.reply_text(
-        f"Saved: {target}  ({len(r.content)} bytes)"
+        f"ERROR: failed to download document after {len(candidate_urls)} attempts. "
+        f"Last error: {last_error}"
     )
 
 
@@ -370,8 +407,13 @@ def main() -> int:
         stream=sys.stdout,
     )
     # Quiet down python-telegram-bot's chatter (it logs every API call at DEBUG).
-    logging.getLogger("telegram").setLevel(logging.WARNING)
+    # We DO want INFO/ERROR from the application itself to see handler firings.
+    logging.getLogger("telegram.ext._updater").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Ensure our app-level logger emits at INFO (basicConfig sets root, but
+    # the medrack.bot logger might inherit a stricter level).
+    logging.getLogger("medrack.bot").setLevel(logging.INFO)
     app = build_application(token)
     app.run_polling()
     return 0
