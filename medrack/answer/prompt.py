@@ -12,7 +12,7 @@ import tiktoken
 from medrack.config import MCQ_EXPLANATION_TARGET_WORDS, THEORY_LONG_TARGET_WORDS
 
 
-MCQ_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) MCQ answer writer for NEET PG, university exams, and PSM viva. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
+MCQ_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) MCQ answer writer for NEET PG and university exams. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
 
 QUESTION: {question}
 
@@ -26,46 +26,48 @@ SOURCE MATERIAL (use only what's relevant):
 
 RESPOND IN THIS EXACT FORMAT:
 1. ANSWER: <single letter a/b/c/d>
-2. REASONING: <one sentence citing the source (WHO, Park 27e, ICMR, etc.)>
-3. EXPLANATION: <{explanation_target_words} words in point form, • bullets, sub-bullets –, **bold** key terms, cite sources>
+2. REASONING: <one sentence stating why this option is correct>
+3. EXPLANATION: <{explanation_target_words} words in point form, • bullets, sub-bullets –, **bold** key terms>
 
 RULES:
 - Point form only. NO paragraphs.
 - The answer letter MUST be one of: {options_letters}
 - Bold key terms with **asterisks** on first use.
-- Cite sources in parens: (WHO), (Park 27e), (ICMR), (NFHS-5), (SRS 2020), (Ottawa Charter), (Alma-Ata).
-- Indian context where relevant: national programmes, ICMR, NFHS data, SRS, IMR/MMR.
+- Do NOT cite sources in parens. This is exam prep, not a literature review.
+- Indian context where relevant: national programmes, NFHS data, SRS, IMR/MMR.
 - End with: "Exam-prep study notes — write in your own hand. Verify current Indian data against your edition."
 
 ANSWER:"""
 
 
-THEORY_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) theory answer writer for NEET PG, university exams, and PSM viva. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
+THEORY_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) theory answer writer for NEET PG and university exams. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
 
-Write ~{word_count_target} words (±20%) in point form.
+Write ~{word_count_target} words (±25%) in point form. This is the length expected for a {marks}-mark exam answer — long enough to cover all key points, short enough to be written by hand in the exam time allotted.
 
 FORMAT (point form only — NO paragraphs):
 - Use "•" bullets (~10-25 words each, one idea per bullet).
 - Use "–" sub-bullets for detail (max 2 levels).
 - Bold key terms with **asterisks** on first use.
-- Cite sources in parens: (WHO), (Park 27e), (ICMR), (NFHS-5), (SRS 2020), (Ottawa Charter), (Alma-Ata).
+- Do NOT cite sources in parens (no "(WHO)", "(Park 27e)", "(ICMR)" etc.). This is exam prep — write the answer as if you were a student writing in an exam booklet. Just state the facts.
 
 SECTION HEADINGS (adapt to the question; use what fits):
 • Definition
 • Uses / Importance / Justification
 • Classification (or Components / Types)
 • Specific explanations or sub-points
-• Indian context (national programmes, ICMR, NFHS data)
+• Indian context (national programmes, NFHS data, IMR/MMR)
 • Conclusion
 
-For short-answer (5-mark) questions: just Definition + 3-5 key bullets + Indian context.
+For 5-mark questions: keep it tight — Definition + 3-5 key bullets + Indian context.
+For 10-mark questions: include Definition + 2-3 sections with multiple bullets each + Indian context + Conclusion.
 
 STYLE:
-- "X (source) is ..." for definitions.
+- "X is ..." for definitions (no source citation).
 - Use **bold** category names in classifications, then enumerate.
-- For statistics: cite year and source ("IMR 28/1000 (SRS 2020)").
+- For statistics: cite the year and source naturally ("IMR is 28/1000 live births (SRS 2020)").
 - Address parts (a, b, c) of a question in clear sub-sections.
 - Mention primary/secondary/tertiary prevention (Park's framework) where relevant.
+- Indian context: use Indian data and programmes (NHM, NVBDCP, RNTCP, Ayushman Bharat, NFHS, SRS, IMR, MMR, U5MR, TFR).
 - Start directly with the first bullet. No preamble.
 
 SOURCE MATERIAL (use only what's relevant):
@@ -205,6 +207,7 @@ def build_theory_prompt(
         word_count_target=word_count_target,
         retrieved_chunks=retrieved_chunks_text,
         question=question_text,
+        marks=marks,
     )
     return BuildResult(
         prompt=prompt,

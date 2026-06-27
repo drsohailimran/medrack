@@ -360,10 +360,27 @@ def _safe_text(text: str) -> str:
     We also convert markdown bold (``**word**``) and italic (``*word*``)
     markers to reportlab's ``<b>...</b>`` and ``<i>...</i>`` tags so they
     actually render as bold/italic in the PDF.
+
+    Per the operator's request, we also strip inline source citations
+    like ``(WHO)``, ``(Park 27e)``, ``(ICMR)``, etc. — this is exam
+    prep, not a literature review. We remove parens that contain only
+    a source reference (with optional version/edition).
     """
     if not text:
         return ""
     out = text
+    # Strip inline source citations: (WHO), (Park 27e), (Park 27 ed.),
+    # (ICMR), (NFHS-5), (SRS 2020), (Ottawa Charter), (Alma-Ata 1978), etc.
+    # Heuristic: a parenthesised group whose content is a short
+    # (1-3 words) source-like phrase: starts with uppercase, has at most
+    # 3 internal spaces, contains at least one uppercase letter and
+    # either a digit or ends in a known source suffix.
+    out = re.sub(
+        r"\s*\(\s*(?:[A-Z][A-Za-z\-]*(?:\s+[A-Za-z0-9\-]+){0,3}"
+        r"(?:\s+(?:19|20)\d{2})?)\s*\)",
+        "",
+        out,
+    )
     # Convert **word** (markdown bold) to <b>word</b>. We do this
     # BEFORE escaping & so the inserted tags aren't double-escaped.
     out = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", out)

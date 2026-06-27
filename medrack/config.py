@@ -86,9 +86,9 @@ LLM_RETRY_BASE_DELAY_SEC = 2.0   # exponential backoff base
 
 # ----- Answer targets -----
 
-THEORY_LONG_TARGET_WORDS = 1500
-THEORY_SHORT_TARGET_WORDS = 900
-THEORY_WORD_TOLERANCE = 0.20  # ±20%
+THEORY_LONG_TARGET_WORDS = 400   # 10-mark question, per reference PDF analysis
+THEORY_SHORT_TARGET_WORDS = 200  # 5-mark question, per reference PDF analysis
+THEORY_WORD_TOLERANCE = 0.25  # ±25% (matches the reference's natural variance)
 THEORY_DEFAULT_MARKS = 10  # used when a theory question has no explicit marks
 MCQ_EXPLANATION_TARGET_WORDS = 300
 MCQ_EXPLANATION_WORD_TOLERANCE = 0.33  # ±33%
