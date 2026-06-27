@@ -35,14 +35,14 @@ RULES:
 - Bold key terms with **asterisks** on first use.
 - Do NOT cite sources in parens. This is exam prep, not a literature review.
 - Indian context where relevant: national programmes, NFHS data, SRS, IMR/MMR.
-- End with: "Exam-prep study notes — write in your own hand. Verify current Indian data against your edition."
+- End your answer with a final bullet summarizing the key takeaway (no extra footer text).
 
 ANSWER:"""
 
 
 THEORY_ANSWER_PROMPT = """You are an MBBS (PSM/Community Medicine) theory answer writer for NEET PG and university exams. Reference: K. Park's "Preventive & Social Medicine" 27th edition.
 
-Write ~{word_count_target} words (±25%) in point form. This is the length expected for a {marks}-mark exam answer — long enough to cover all key points, short enough to be written by hand in the exam time allotted.
+Write ~{word_count_target} words (±10%) in point form. This is the length expected for a {marks}-mark exam answer — long enough to cover all key points, short enough to be written by hand in the exam time allotted.
 
 FORMAT (point form only — NO paragraphs):
 - Use "•" bullets (~10-25 words each, one idea per bullet).
@@ -69,6 +69,7 @@ STYLE:
 - Mention primary/secondary/tertiary prevention (Park's framework) where relevant.
 - Indian context: use Indian data and programmes (NHM, NVBDCP, RNTCP, Ayushman Bharat, NFHS, SRS, IMR, MMR, U5MR, TFR).
 - Start directly with the first bullet. No preamble.
+- End your answer with a final bullet summarizing the key takeaway (no extra footer text).
 
 SOURCE MATERIAL (use only what's relevant):
 ---
@@ -76,8 +77,6 @@ SOURCE MATERIAL (use only what's relevant):
 ---
 
 QUESTION: {question}
-
-End with: "Exam-prep study notes — write in your own hand. Verify current Indian data against your edition."
 
 ANSWER:"""
 

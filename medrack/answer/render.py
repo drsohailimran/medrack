@@ -335,6 +335,10 @@ def _build_styles():
         alignment=TA_CENTER,
         textColor=HexColor("#888888"),
     )
+    # (The "Exam-prep study notes" footer was removed in v5.2 per
+    # operator request. We keep the style around in case it's needed
+    # for non-preview PDFs, but the study_note is no longer emitted.)
+
     return {
         "page_header": page_header,
         "title": title,
@@ -611,14 +615,11 @@ def render_preview_pdf(
                     _safe_text(content), styles["body"]
                 ))
 
-    # ---- 8. Exam-prep study notes footer ----
-    study_note_text = (
-        "Exam-prep study notes \u2013 write in your own hand. "
-        "Verify current Indian data against your edition."
-    )
-    story.append(Paragraph(study_note_text, styles["study_note"]))
+    # (The "Exam-prep study notes" footer was removed in v5.2 per
+    # operator request — the preview PDF should look like a clean
+    # exam-ready answer, not include study notes.)
 
-    # ---- 9. Page numbers (rendered via on_page callback below) ----
+    # ---- Page numbers (rendered via on_page callback below) ----
 
     # Build the document. We use a custom on_page callback to draw the
     # "Page N" footer on every page (including pages 2+ that flow from
