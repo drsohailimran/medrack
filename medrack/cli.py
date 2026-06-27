@@ -136,6 +136,12 @@ def cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    """Launch the Gradio dashboard on 127.0.0.1:7860."""
+    from medrack.dashboard.app import main as dashboard_main
+    return dashboard_main()
+
+
 def _extract_pages(pdf_path: Path) -> list[dict]:
     """Run the T2/T3 hybrid extraction across all pages of ``pdf_path``.
 
@@ -1112,6 +1118,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("cancel", help="Cancel the current preview")
     sp.set_defaults(func=cmd_cancel)
+
+    # Gradio dashboard (Stage 2.6 / D5)
+    sp = sub.add_parser(
+        "dashboard", help="Launch the Gradio dashboard (http://127.0.0.1:7860)"
+    )
+    sp.set_defaults(func=cmd_dashboard)
 
     return p
 
