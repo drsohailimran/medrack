@@ -80,7 +80,9 @@ class LLMClient:
         model: str | None = None,
         fallback_models: list[str] | None = None,
         max_retries: int | None = None,
-        timeout: float = 120.0,
+        # 90s per attempt: long enough for qwen3.7-max at max_tokens=2048
+        # (~30-60s typical), short enough to fail fast and move to fallback.
+        timeout: float = 90.0,
     ):
         self.base_url = base_url if base_url is not None else config.LLM_BASE_URL
         self.model = model if model is not None else config.LLM_DEFAULT_MODEL
@@ -108,25 +110,65 @@ class LLMClient:
         return self._client
 
     def _try_once(self, model: str, prompt: str) -> LLMResponse:
-        """Single attempt against one model. Raises on HTTP error."""
+        """Single attempt against one model. Raises on HTTP error.
+
+        Returns ``LLMUnavailableError`` (not a regular exception) when:
+          - the model responds 200 but only emits ``thinking`` blocks
+            (no ``text`` block) — common with qwen3.7-max when it gets
+            confused. We treat this as a failure so the chain moves on.
+          - the model responds with a 400 about empty messages (the
+            DeepSeek/Moonshot providers reject our Anthropic-format
+            payload — we should not retry 3 times on the same bad request).
+        """
         # base_url is `https://opencode.ai/zen/go/v1` (already includes /v1),
         # so the messages endpoint is just `/messages`.
         url = f"{self.base_url}/messages"
         body = {
             "model": model,
-            "max_tokens": 4096,
-            "messages": [{"role": "user", "content": prompt}],
+            # 2048 is enough for a 1500-word answer (~1800 tokens) and
+            # keeps qwen3.7-max within its responsive range. 4096 caused
+            # 120s+ timeouts on the OpenCode Go endpoint.
+            "max_tokens": 2048,
+            # Anthropic-native content format (list of {type, text}) so
+            # providers that proxy to OpenAI-style endpoints (DeepSeek,
+            # Moonshot) don't reject the payload as "empty input".
+            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
         start = time.perf_counter()
         response = self._get_client().post(url, json=body)
+        # 400 with "empty input messages" means this provider can't accept
+        # our payload format. Treat as LLMUnavailableError so the chain
+        # moves on immediately (no point retrying).
+        if response.status_code == 400:
+            try:
+                err_msg = response.json().get("error", {}).get("message", "")
+            except Exception:
+                err_msg = response.text[:200]
+            if "empty" in err_msg.lower():
+                raise LLMUnavailableError(
+                    f"Model {model} rejected payload (400): {err_msg!r}"
+                )
         response.raise_for_status()
         data = response.json()
         latency = time.perf_counter() - start
 
-        text = data["content"][0]["text"]
-        usage = data["usage"]
-        prompt_tokens = usage["input_tokens"]
-        completion_tokens = usage["output_tokens"]
+        # Extract text. Some models (qwen3.7-max, GLM-5.2) emit a
+        # `thinking` block but no `text` block — treat that as no answer.
+        text_parts = [
+            c.get("text", "")
+            for c in data.get("content", [])
+            if c.get("type") == "text" and c.get("text")
+        ]
+        text = "".join(text_parts).strip()
+        if not text:
+            # No text content — model returned only thinking. Move to
+            # the next model in the chain.
+            raise LLMUnavailableError(
+                f"Model {model} returned only thinking blocks, no text."
+            )
+        usage = data.get("usage", {})
+        prompt_tokens = usage.get("input_tokens", 0)
+        completion_tokens = usage.get("output_tokens", 0)
         return LLMResponse(
             text=text,
             prompt_tokens=prompt_tokens,

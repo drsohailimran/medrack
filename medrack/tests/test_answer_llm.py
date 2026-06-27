@@ -10,7 +10,7 @@ from medrack.answer.llm import LLMClient, LLMResponse, LLMUnavailableError
 SAMPLE_RESPONSE = {
     "content": [{"type": "text", "text": "The answer is 42."}],
     "usage": {"input_tokens": 100, "output_tokens": 50},
-    "model": "minimax-m3",
+    "model": "qwen3.7-max",
 }
 
 
@@ -35,7 +35,7 @@ def test_complete_returns_text_and_tokens():
     assert resp.prompt_tokens == 100
     assert resp.completion_tokens == 50
     assert resp.total_tokens == 150
-    assert resp.model == "minimax-m3"
+    assert resp.model == "qwen3.7-max"
     assert resp.latency_seconds > 0
 
 
@@ -46,7 +46,7 @@ def test_complete_uses_default_model():
     # The first call should use the default model
     call_args = mock_cls.return_value.post.call_args
     body = call_args.kwargs.get("json") or call_args[1].get("json")
-    assert body["model"] == "minimax-m3"
+    assert body["model"] == "qwen3.7-max"
 
 
 def test_retry_on_429():
@@ -117,3 +117,46 @@ def test_llm_response_dataclass():
     )
     assert resp.text == "x"
     assert resp.total_tokens == 3
+
+
+def test_thinking_only_response_is_rejected():
+    """A response with only thinking blocks (no text) must raise
+    LLMUnavailableError so the fallback chain moves on."""
+    from unittest.mock import patch, MagicMock
+    from medrack.answer.llm import LLMClient, LLMUnavailableError
+
+    thinking_only = {
+        "content": [
+            {"type": "thinking", "thinking": "lots of thinking..."},
+            {"type": "thinking", "thinking": "more thinking"},
+        ],
+        "usage": {"input_tokens": 12, "output_tokens": 4096},
+        "model": "qwen3.7-max",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = thinking_only
+    mock_resp.raise_for_status = MagicMock()
+    client = LLMClient()
+    with patch.object(client, "_get_client") as mock_get:
+        mock_get.return_value.post.return_value = mock_resp
+        with pytest.raises(LLMUnavailableError, match="only thinking"):
+            client.complete("any prompt")
+
+
+def test_empty_input_400_is_rejected_immediately():
+    """A 400 'empty input messages' from the provider must raise
+    LLMUnavailableError so the chain doesn't retry 3 times."""
+    from unittest.mock import patch, MagicMock
+    from medrack.answer.llm import LLMClient, LLMUnavailableError
+
+    err_resp = MagicMock()
+    err_resp.status_code = 400
+    err_resp.json.return_value = {
+        "error": {"message": "Error from provider (DeepSeek): Empty input messages"}
+    }
+    client = LLMClient(model="deepseek-v4-pro")
+    with patch.object(client, "_get_client") as mock_get:
+        mock_get.return_value.post.return_value = err_resp
+        with pytest.raises(LLMUnavailableError, match="rejected payload"):
+            client.complete("any prompt")
