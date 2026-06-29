@@ -285,12 +285,25 @@ def generate_answer(
     )
     query_embedding = _embed_query(question_text)
 
-    # Step 3: retrieve top_k chunks from kb_<subject>.
-    raw_results = query(subject, query_embedding, top_k=RETRIEVAL_TOP_K)
+    # Step 3: adaptive retrieval (Phase 7). The retrieval engine
+    # composes question analysis, strategy-based top_k + filter, and
+    # metadata-boost reranking. The vector similarity remains the
+    # primary mechanism; metadata is an additional signal.
+    from medrack.retrieval import retrieve_for_question
+    retrieval_result = retrieve_for_question(
+        question=question,
+        subject=subject,
+        query_embedding=query_embedding,
+        marks=marks,
+    )
+    raw_results = retrieval_result.chunks
     retrieval_chunks = _transform_chunks(raw_results)
     chunk_texts = [r["text"] for r in raw_results]
     logger.info(
-        "Retrieved %d chunks from kb_%s", len(retrieval_chunks), subject,
+        "Retrieved %d chunks from kb_%s (top_k=%d, filter=%s, marks=%s, sections=%s)",
+        len(retrieval_chunks), subject,
+        retrieval_result.top_k, retrieval_result.metadata_filter_active,
+        marks, retrieval_result.analysis.target_sections,
     )
 
     # Step 4: build the prompt (MCQ or Theory). Subject flows through

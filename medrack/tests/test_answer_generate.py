@@ -125,12 +125,17 @@ def test_generate_force_regenerate_bypasses_cache(temp_home, mock_llm):
 
 def test_generate_retrieval_chunks_populated(temp_home, mock_llm):
     # If we index a chunk, retrieval_chunks should be populated.
+    # Phase 7: the chunk must have metadata matching the question's
+    # detected section filter, otherwise the adaptive strategy's
+    # filter would exclude it.
     from medrack.ingest.chunk import Chunk
+    from medrack.ingest.metadata import ChunkMetadata, StructureMetadata
     chunk = Chunk(
         chunk_id="test-chunk-1",
         text="The WHO definition of health includes physical, mental, and social well-being.",
         subject="psm", book_id="b1", chapter_title="Concept of Health",
         page_start=12, page_end=14, token_count=15,
+        metadata=ChunkMetadata(structure=StructureMetadata(section_definition=True)),
     )
     from medrack.ingest.embed import embed_chunks
     from medrack.ingest.index import index_chunks
