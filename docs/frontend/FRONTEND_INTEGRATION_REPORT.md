@@ -295,10 +295,10 @@ The frontend was successfully pushed.
 | 19 | `/cache/status` | ✓ httpApi | ✓ | GET | ✓ |
 | 20 | `/cache/reanswer` | ✓ httpApi | ✓ | POST | ✓ |
 | 21 | `/logs/{name}` | ✓ httpApi | ✓ | GET | ✓ |
-| 22 | `/logs/{name}/search` | ✓ httpApi | ✓ | GET | ✓ |
+| — | `/logs/{name}/search` | ✓ httpApi | ✓ | GET | ✓ |
 | — | `listProjects()` | ✓ mockApi | ✗ (frontend-only) | — | ✓ |
 
-**22/22 backend endpoints covered. 1 frontend-only method
+**21/21 backend endpoints covered. 1 frontend-only method
 delegated to mock. Zero gaps.**
 
 ---
