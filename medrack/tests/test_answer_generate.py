@@ -86,7 +86,8 @@ def test_generate_uses_theory_prompt_for_theory_question(temp_home, mock_llm):
     prompt = call_args[0][0] if call_args[0] else call_args.kwargs.get("prompt", "")
     # Theory prompt has "Definition" section
     assert "Definition" in prompt
-    assert "1500" in prompt  # word count target
+    # 10-mark (default) target is 500 words per the operator-requested range
+    assert "500" in prompt  # word count target
 
 
 def test_generate_returns_from_cache_on_second_call(temp_home, mock_llm):

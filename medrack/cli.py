@@ -115,17 +115,34 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  {'✓' if path else '✗'} {tool:<12} {path or '(not found)'}")
 
     # Manifest summary
+    # Per loose-ends audit: modules were being saved to
+    # <home>/modules/<subject>/<name>/extracted.json but never
+    # written to the manifest, so `medrack status` always showed
+    # "Modules: 0 active" even when modules were ingested. Now we
+    # also scan the modules directory on disk and report the union.
     print("\nIndexed:")
     if config.MANIFEST_PATH.exists():
         m = json.loads(config.MANIFEST_PATH.read_text())
         books = m.get("books", [])
         modules = m.get("modules", [])
-        active_books = [b for b in books if not b.get("archived_at")]
-        active_modules = [m for m in modules if not m.get("archived_at")]
-        print(f"  Books:   {len(active_books)} active, {len(books) - len(active_books)} archived")
-        print(f"  Modules: {len(active_modules)} active, {len(modules) - len(active_modules)} archived")
     else:
-        print("  (no manifest — run `medrack init`)")
+        books, modules = [], []
+    # Fall back to disk scan for modules (the manifest may not list them
+    # if the user ingested via the dashboard before manifest.add_module
+    # was wired up)
+    from medrack.module.storage import list_modules
+    disk_modules = list_modules()
+    modules_by_id = {mod.get("module_id") or mod.get("name"): mod
+                     for mod in modules}
+    for dmod in disk_modules:
+        if dmod["name"] not in modules_by_id:
+            modules.append(dmod)
+    active_books = [b for b in books if not b.get("archived_at")]
+    active_modules = [m for m in modules if not m.get("archived_at")]
+    print(f"  Books:   {len(active_books)} active, {len(books) - len(active_books)} archived")
+    print(f"  Modules: {len(active_modules)} active, {len(modules) - len(active_modules)} archived")
+    if not config.MANIFEST_PATH.exists() and (books or modules):
+        print("  (no manifest on disk — counts taken from filesystem scan)")
 
     print(f"\nSubjects ({len(Subject)}): {', '.join(Subject.values())}")
     return 0
