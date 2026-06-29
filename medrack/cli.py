@@ -134,6 +134,12 @@ def cmd_bot(args: argparse.Namespace) -> int:
     return bot_main()
 
 
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    """Run the benchmark suite on the regression dataset (Phase 5)."""
+    from medrack.benchmarks.run import main as benchmark_main
+    return benchmark_main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="medrack",
@@ -228,6 +234,12 @@ def build_parser() -> argparse.ArgumentParser:
         "bot", help="Launch the Telegram bot (requires TELEGRAM_BOT_TOKEN env var)"
     )
     sp.set_defaults(func=cmd_bot)
+
+    # Benchmark suite (Phase 5)
+    sp = sub.add_parser(
+        "benchmark", help="Run the benchmark suite (Phase 5, directive v1.0)"
+    )
+    sp.set_defaults(func=cmd_benchmark)
 
     return p
 
