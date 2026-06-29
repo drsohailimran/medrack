@@ -42,12 +42,13 @@ Design notes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import chromadb
 
 from medrack import config
 from medrack.ingest.chunk import Chunk
+from medrack.ingest.metadata import MetadataFilter, flatten_for_chroma, filter_to_chroma_where
 
 
 def _chroma_path() -> Path:
@@ -81,11 +82,16 @@ def index_chunks(chunks: List[Chunk], subject: str) -> int:
     - ``ids``         : ``chunk.chunk_id`` (deterministic UUID from T6)
     - ``embeddings``  : ``chunk.embedding`` (384-dim list of floats)
     - ``documents``   : ``chunk.text`` (the raw chunk text)
-    - ``metadatas``   : provenance dict (see below)
+    - ``metadatas``   : provenance dict + structured metadata (see below)
 
-    Metadata dict per chunk contains:
+    The base metadata dict per chunk contains:
         subject, book_id, chapter_title, page_start, page_end,
         token_count, embedding_model
+
+    If the chunk has a :class:`ChunkMetadata` (Phase 6), the grouped
+    metadata is flattened via :func:`flatten_for_chroma` and merged
+    into the metadata dict. Chunks without metadata (backward compat)
+    still get the base dict only.
 
     Returns the number of chunks added. ChromaDB enforces a unique-id
     constraint — re-indexing a chunk with the same ``chunk_id`` raises;
@@ -93,11 +99,15 @@ def index_chunks(chunks: List[Chunk], subject: str) -> int:
     deleting the old record first.
     """
     collection = get_or_create_collection(subject)
-    collection.add(
-        ids=[c.chunk_id for c in chunks],
-        embeddings=[c.embedding for c in chunks],
-        documents=[c.text for c in chunks],
-        metadatas=[{
+
+    base_keys = (
+        "subject", "book_id", "chapter_title", "page_start", "page_end",
+        "token_count", "embedding_model",
+    )
+
+    metadatas = []
+    for c in chunks:
+        meta: dict = {
             "subject": c.subject,
             "book_id": c.book_id,
             "chapter_title": c.chapter_title,
@@ -105,7 +115,26 @@ def index_chunks(chunks: List[Chunk], subject: str) -> int:
             "page_end": c.page_end,
             "token_count": c.token_count,
             "embedding_model": config.EMBEDDING_MODEL,
-        } for c in chunks],
+        }
+        if c.metadata is not None:
+            # Flatten the grouped metadata into Chroma-safe scalars.
+            # The flattening helper is the only place that knows about
+            # Chroma's scalar-only constraint.
+            flat = flatten_for_chroma(c.metadata)
+            for k, v in flat.items():
+                if k in base_keys:
+                    # Provenance keys take precedence over any name
+                    # collision with a metadata field. None today, but
+                    # pinned to prevent future regressions.
+                    continue
+                meta[k] = v
+        metadatas.append(meta)
+
+    collection.add(
+        ids=[c.chunk_id for c in chunks],
+        embeddings=[c.embedding for c in chunks],
+        documents=[c.text for c in chunks],
+        metadatas=metadatas,
     )
     return len(chunks)
 
@@ -114,6 +143,7 @@ def query(
     subject: str,
     query_embedding: List[float],
     top_k: int = 8,
+    metadata_filter: Optional[MetadataFilter] = None,
 ) -> List[dict]:
     """Return the top-``top_k`` chunks for ``subject`` by vector similarity.
 
@@ -136,6 +166,12 @@ def query(
     top_k:
         Maximum number of results to return. Defaults to 8, matching
         ``medrack.config.RETRIEVAL_TOP_K``.
+    metadata_filter:
+        Optional :class:`MetadataFilter` (Phase 6). When provided and
+        non-empty, results are restricted to chunks whose structured
+        metadata matches the filter. Translation to Chroma's ``where``
+        clause is done via :func:`filter_to_chroma_where`; the rest of
+        the application does not need to know Chroma's filter syntax.
 
     Returns
     -------
@@ -153,10 +189,18 @@ def query(
         query_embeddings = [query_embedding]
     else:
         query_embeddings = query_embedding
-    results = collection.query(
+
+    # Phase 6: optional metadata filter translation.
+    where = filter_to_chroma_where(metadata_filter) if metadata_filter is not None else None
+
+    query_kwargs: dict = dict(
         query_embeddings=query_embeddings,
         n_results=top_k,
     )
+    if where is not None:
+        query_kwargs["where"] = where
+
+    results = collection.query(**query_kwargs)
 
     # Flatten ChromaDB's nested result structure (always length-1 lists
     # at the outer level when query_embeddings is a single vector).

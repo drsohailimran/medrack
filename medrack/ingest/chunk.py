@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import tiktoken
 
 from medrack.ingest.chapter import Chapter
+from medrack.ingest.metadata import ChunkMetadata
 
 # Module-level encoding cache (cl100k_base loads a ~1MB BPE table; cache once).
 _ENCODING = None
@@ -50,6 +51,10 @@ class Chunk:
     page_end: int
     token_count: int
     # embedding: list[float]  # filled in T7, not T6
+    # Phase 6: structured medical metadata. Optional for backward compat with
+    # callers that construct Chunk directly (tests, external tools). The
+    # ingestion pipeline always populates this via the extractor.
+    metadata: Optional[ChunkMetadata] = None
 
 
 def _build_chapter_spans(pages: Sequence[dict], chapter: Chapter) -> List[dict]:
@@ -93,6 +98,7 @@ def _chunk_one_chapter(
     book_id: str,
     chunk_size: int,
     chunk_overlap: int,
+    extractor=None,
 ) -> List[Chunk]:
     """Tokenize one chapter and slide a window across it."""
     if chunk_size <= 0:
@@ -156,6 +162,21 @@ def _chunk_one_chapter(
             f"{book_id}|{page_start}|{page_end}|{window_text[:200]}".encode()
         ).hexdigest()[:16]
 
+        # Phase 6: extract structured metadata via the pluggable extractor.
+        # The extractor is independent of chunking; it only reads the chunk
+        # text and returns additive metadata. If no extractor is provided
+        # (backward compat), the chunk's metadata field stays None.
+        chunk_metadata = None
+        if extractor is not None:
+            chunk_metadata = extractor.extract(
+                window_text,
+                subject=subject,
+                book_id=book_id,
+                chapter_title=chapter.title,
+                page_start=page_start,
+                page_end=page_end,
+            )
+
         chunks.append(
             Chunk(
                 chunk_id=chunk_id,
@@ -166,6 +187,7 @@ def _chunk_one_chapter(
                 page_start=page_start,
                 page_end=page_end,
                 token_count=len(window_ids),
+                metadata=chunk_metadata,
             )
         )
 
@@ -183,6 +205,7 @@ def chunk_pages(
     book_id: str,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
+    extractor=None,
 ) -> List[Chunk]:
     """Chunk the pages respecting chapter boundaries.
 
@@ -200,6 +223,11 @@ def chunk_pages(
     chunk_size, chunk_overlap:
         Token counts (``tiktoken`` cl100k_base). Defaults match
         ``medrack.config.CHUNK_SIZE_TOKENS`` / ``CHUNK_OVERLAP_TOKENS``.
+    extractor:
+        Optional :class:`medrack.ingest.metadata.MetadataExtractor`. When
+        provided, each chunk is enriched with structured metadata. When
+        ``None`` (default), chunks are returned with ``metadata=None`` —
+        preserves backward compatibility with v0 callers.
     """
     all_chunks: List[Chunk] = []
     for chapter in chapters:
@@ -211,6 +239,7 @@ def chunk_pages(
                 book_id=book_id,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
+                extractor=extractor,
             )
         )
     return all_chunks

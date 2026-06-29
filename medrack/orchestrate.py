@@ -29,6 +29,7 @@ from .ingest import manifest
 from .ingest import ocr as ocr_mod
 from .ingest import quality as quality_mod
 from .ingest import text_extract as text_extract_mod
+from .ingest.extractors import RegexMetadataExtractor
 from .module import extract as module_extract_mod
 from .module import format as module_format_mod
 from .module import llm_extract as module_llm_mod
@@ -155,11 +156,16 @@ def cmd_ingest_book(args: argparse.Namespace) -> int:
     print(f"  found {len(chapters)} chapter(s)", file=sys.stderr)
 
     print(f"Chunking...", file=sys.stderr)
+    # Phase 6: enrich every chunk with structured metadata via the
+    # pluggable extractor. v1 uses the deterministic regex extractor;
+    # future phases can swap in an LLM-based or hybrid extractor
+    # without changing this call site.
     chunks = chunk_mod.chunk_pages(
         cleaned_pages,
         chapters,
         subject=subject.value,
         book_id=book_id,
+        extractor=RegexMetadataExtractor(),
     )
     print(f"  produced {len(chunks)} chunks", file=sys.stderr)
 
