@@ -158,6 +158,44 @@ SUBJECT_CONTEXTS: dict[str, dict[str, str]] = {
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
+# ----- Answer cache versioning (Phase 3, directive v1.0) -----
+# Per-component version numbers, tracked independently. A cached
+# answer records these in its ``versions`` dict; when ``load_answer``
+# detects a mismatch against the current values, the answer is marked
+# ``stale: true`` with the list of reasons — the cache file is NEVER
+# deleted by the version check (per the operator's directive: "Mark
+# answers stale instead of deleting them").
+#
+# When to bump a version:
+#   schema       — the shape of the cache JSON changes (new required
+#                  field, removed field, or new field is now mandatory).
+#                  Old caches are still readable but are marked stale.
+#   prompt       — the prompt template text changes (e.g. PSM-specific
+#                  wording added, or the subject-context schema in
+#                  SUBJECT_CONTEXTS changes). Re-renders produce
+#                  different answers.
+#   retrieval    — chunk size, overlap, top_k, distance threshold, or
+#                  embedding model change. The retrieval step now
+#                  returns different chunks for the same question.
+#   planner      — when the planner module lands (Phase 7+), bump
+#                  this. Default 0 (not yet implemented).
+#   validator    — when the validator pipeline lands (Phase 7+), bump
+#                  this. Default 0 (not yet implemented).
+#   reranker     — when the cross-encoder reranker lands (Phase 7+),
+#                  bump this. Default 0 (not yet implemented).
+#   renderer     — the reportlab flowable builder / block classifier
+#                  changes. Re-renders produce different PDFs even if
+#                  the LLM text is identical.
+PIPELINE_VERSIONS: dict[str, int] = {
+    "schema": 2,     # Phase 3: added versions, target_word_count, package_version, embedding_model
+    "prompt": 1,     # Phase 2: subject-aware prompt (K. Park vs Narayan Reddy etc.)
+    "retrieval": 1,  # current retrieval config (top_k=8, MiniLM-L6-v2)
+    "planner": 0,    # not yet implemented
+    "validator": 0,  # not yet implemented
+    "reranker": 0,   # not yet implemented
+    "renderer": 1,   # current renderer (K. Park style, commit c668289)
+}
+
 # ----- OCR (Tesseract via pytesseract) -----
 
 OCR_DPI = 300

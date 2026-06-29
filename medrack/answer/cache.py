@@ -5,7 +5,9 @@ Public interface:
     answer_path(module_name, chapter, qid) -> Path
     save_answer(module_name, chapter, qid, data) -> None
     load_answer(module_name, chapter, qid) -> dict | None
-    cache_key_for_question(module_name, qid, question_text, prompt_template, model) -> str
+    cache_key_for_question(module_name, qid, question_text,
+                           prompt_template, model, *,
+                           subject, target_word_count) -> str
 
 Design notes:
 - The answers root is re-evaluated on every call via
@@ -22,6 +24,14 @@ Design notes:
   if a cached answer is still semantically valid (e.g. if the question
   text was edited, or the prompt template / model changed, treat the
   cached answer as a miss even when the file is present).
+- **Phase 3 (directive v1.0) — layered answer versioning:**
+  ``load_answer`` now also calls ``medrack.answer.versioning.is_stale``
+  on the loaded dict. If the cached answer's versions don't match the
+  current ``PIPELINE_VERSIONS``, the returned dict is annotated with
+  ``stale: True`` and ``stale_reasons: [...]``. The cache FILE is never
+  modified or deleted by the version check. The caller (the
+  orchestrator) decides whether to surface the stale answer, regenerate
+  it, or both.
 """
 from __future__ import annotations
 
@@ -60,11 +70,21 @@ def save_answer(module_name: str, chapter: str, qid: str, data: dict) -> None:
 
 
 def load_answer(module_name: str, chapter: str, qid: str) -> dict | None:
-    """Load the cached answer, or ``None`` if the file is missing."""
+    """Load the cached answer, or ``None`` if the file is missing.
+
+    Phase 3: also annotates the returned dict with ``stale: True`` and
+    ``stale_reasons: [...]`` if the cached answer's versions don't match
+    the current ``PIPELINE_VERSIONS``. The cache file on disk is never
+    modified or deleted — the orchestrator decides what to do with the
+    stale annotation.
+    """
+    from medrack.answer.versioning import mark_stale
+
     path = answer_path(module_name, chapter, qid)
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    return mark_stale(raw)
 
 
 def cache_key_for_question(
@@ -73,15 +93,37 @@ def cache_key_for_question(
     question_text: str,
     prompt_template: str,
     model: str,
+    *,
+    subject: str = "psm",
+    target_word_count: int | None = None,
 ) -> str:
     """Return a deterministic 16-character SHA-256 hex digest for the
     canonical concatenation of the inputs.
 
-    Includes the question text (so editing the module invalidates cache),
-    the prompt template id (so changing the template invalidates cache),
-    and the model name (so upgrading the model invalidates cache). The
-    ``qid`` is included so two distinct questions in the same module do
-    not collide.
+    Phase 3: the key now also includes the current ``PIPELINE_VERSIONS``
+    dict (as a compact string), the ``subject`` (so FMT and PSM
+    questions with identical text don't collide), the
+    ``target_word_count`` (so a 500-word answer and a 775-word answer
+    for the same question are distinct cache keys), and the
+    ``EMBEDDING_MODEL`` (so a re-embedding invalidates cache).
+
+    The first five positional parameters keep their old names for
+    backward compatibility with existing call sites — the new
+    parameters are keyword-only.
     """
-    canonical = f"{module_name}|{qid}|{question_text}|{prompt_template}|{model}"
+    from medrack import config as _config
+
+    # Compact serialisation of the versions dict. Sorting keys makes
+    # the digest stable across Python versions and dict ordering.
+    versions_str = ",".join(
+        f"{k}={_config.PIPELINE_VERSIONS[k]}"
+        for k in sorted(_config.PIPELINE_VERSIONS.keys())
+    )
+    wc = target_word_count if target_word_count is not None else 0
+    canonical = (
+        f"{module_name}|{qid}|{question_text}|{prompt_template}|{model}"
+        f"|subject={subject}|versions={versions_str}"
+        f"|target_word_count={wc}"
+        f"|embedding_model={_config.EMBEDDING_MODEL}"
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]

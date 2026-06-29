@@ -130,11 +130,16 @@ class BuildResult:
         prompt_tokens_estimate: Rough token count estimate (tiktoken cl100k_base).
         system_template: Which template was used — "mcq" or "theory".
         subject: The subject the prompt was built for (after fallback resolution).
+        word_count_target: The word count target the LLM was instructed to
+            hit (``int`` for theory questions — 475 or 775; ``None`` for
+            MCQ questions). Phase 3: recorded on the cached answer for
+            staleness detection.
     """
     prompt: str
     prompt_tokens_estimate: int
     system_template: str
     subject: str
+    word_count_target: int | None = None
 
 
 def format_options_for_prompt(options: dict[str, str]) -> str:
@@ -257,6 +262,7 @@ def build_mcq_prompt(
         prompt_tokens_estimate=estimate_tokens(prompt),
         system_template="mcq",
         subject=subject,
+        word_count_target=explanation_target_words,
     )
 
 
@@ -311,4 +317,5 @@ def build_theory_prompt(
         prompt_tokens_estimate=estimate_tokens(prompt),
         system_template="theory",
         subject=subject,
+        word_count_target=word_count_target,
     )

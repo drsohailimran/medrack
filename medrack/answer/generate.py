@@ -148,6 +148,7 @@ def build_answer_dict(
     retrieval_chunks: list[dict],
     cache_hit: bool = False,
     cache_key: str | None = None,
+    target_word_count: int | None = None,
 ) -> dict:
     """Construct the answer dict in the brief's locked schema.
 
@@ -156,7 +157,18 @@ def build_answer_dict(
     ChromaDB. ``cache_key`` is stored under the underscored key
     ``_cache_key`` so callers can perform staleness checks; it is not
     part of the public schema, just internal bookkeeping.
+
+    Phase 3: also records ``package_version``, ``versions``,
+    ``target_word_count``, and ``embedding_model`` on every cached
+    answer. These are read by ``medrack.answer.versioning.is_stale``
+    to determine if a cached answer needs regeneration. The
+    ``stale`` and ``stale_reasons`` fields default to ``False`` and
+    ``[]`` for fresh answers; they get populated by ``load_answer`` if
+    a version mismatch is detected.
     """
+    from medrack import __version__ as _pkg_version
+    from medrack import config as _config
+
     now_iso = datetime.now(timezone.utc).isoformat()
     n_retrieved = len(retrieval_chunks)
     answer: dict[str, Any] = {
@@ -177,7 +189,19 @@ def build_answer_dict(
         "used_general_fallback": n_retrieved == 0,
         "kb_chunks_retrieved": n_retrieved,
         "generated_at": now_iso,
+        # Phase 3: layered answer versioning (directive v1.0).
+        # These fields let load_answer decide if this cache entry is
+        # still valid without consulting the orchestrator.
+        "package_version": _pkg_version,
+        "versions": dict(_config.PIPELINE_VERSIONS),
+        "embedding_model": _config.EMBEDDING_MODEL,
+        # staleness defaults — load_answer will set stale=True if a
+        # version drift is detected at read time.
+        "stale": False,
+        "stale_reasons": [],
     }
+    if target_word_count is not None:
+        answer["target_word_count"] = target_word_count
     # Internal: stash the cache key for Stage 2.5 invalidation. The
     # public schema does not include this, but persisting it is what
     # makes a future "is this cache entry stale?" check possible.
@@ -273,11 +297,17 @@ def generate_answer(
     # to the prompt builder for subject-aware context (Phase 2).
     build_result = _build_prompt(question, chunk_texts, marks=marks, subject=subject)
     system_template = build_result.system_template
+    # Phase 3: capture the word count target the LLM was instructed
+    # to hit. Recorded on the cached answer so a future word-count
+    # revision (e.g. 775 -> 900) can mark old caches stale.
+    target_word_count = build_result.word_count_target
 
     # Step 5: call the LLM.
     llm_response = llm_client.complete(build_result.prompt)
 
-    # Build the cache key (so Stage 2.5 can detect template/model drift).
+    # Build the cache key. Phase 3: includes PIPELINE_VERSIONS, subject,
+    # target_word_count, and embedding_model so any pipeline drift
+    # produces a different cache key (and the orchestrator regenerates).
     # Use getattr with a default in case the client doesn't expose `.model`
     # (e.g. MockLLMClient in tests).
     cache_key = cache_key_for_question(
@@ -286,6 +316,8 @@ def generate_answer(
         question_text=question_text,
         prompt_template=system_template,
         model=getattr(llm_client, "model", "unknown"),
+        subject=subject,
+        target_word_count=target_word_count,
     )
 
     # Step 6: assemble the answer dict, save to cache, return.
@@ -299,6 +331,7 @@ def generate_answer(
         retrieval_chunks=retrieval_chunks,
         cache_hit=False,
         cache_key=cache_key,
+        target_word_count=target_word_count,
     )
     save_answer(module_name, chapter, qid, answer)
     logger.info(
