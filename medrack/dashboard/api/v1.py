@@ -200,8 +200,8 @@ def make_router() -> APIRouter:
         return result.to_dict()
 
     @router.get("/questions/stale")
-    def re_answer_stale(subject: str = Query(...), dry_run: bool = True):
-        return questions.re_answer_stale(subject, dry_run=dry_run)
+    def re_answer_stale(module_name: Optional[str] = None, dry_run: bool = True):
+        return questions.re_answer_stale(module_name, dry_run=dry_run)
 
     # ---- Pipeline ----
 

@@ -125,10 +125,30 @@ class QuestionService:
         """Revise an existing answer with a new question text.
 
         The cached answer is invalidated (marked stale) and a new
-        answer is generated.
+        answer is generated. If no cached entry exists, the
+        stale-marking step is a no-op.
         """
-        from medrack.answer.cache import mark_stale
-        mark_stale(qid=qid, reason="revised")
+        from medrack.answer.versioning import mark_stale as mark_cached_stale
+        from medrack.answer.cache import _answers_root
+        import json
+        # The cache is a flat file tree at <answers>/<qid>.json or
+        # <answers>/<module>/<chapter>/<qid>.json. We scan for the
+        # qid and mark any matching entry stale. This is best-effort;
+        # if no entry exists, generation will simply write a fresh one.
+        root = _answers_root()
+        if root.exists():
+            for path in root.rglob(f"{qid}.json"):
+                try:
+                    with path.open() as f:
+                        data = json.load(f)
+                except Exception:
+                    continue
+                marked = mark_cached_stale(data)
+                try:
+                    with path.open("w") as f:
+                        json.dump(marked, f, indent=2, sort_keys=True)
+                except Exception:
+                    pass
         return self.generate(GenerationRequest(
             qid=qid,
             question_text=revised_question_text,

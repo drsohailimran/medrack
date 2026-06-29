@@ -228,11 +228,47 @@ unreachable (a full-page error screen).
 
 ## Recommended client setup
 
+The frontend's `src/lib/api/client.ts` ships with **two**
+implementations behind the shared `MedRackApi` interface:
+
+- `httpApi` — calls the real backend at `VITE_MEDRACK_API_BASE`
+  (default `http://localhost:8000/api/v1`).
+- `mockApi` — returns deterministic fixtures from `mock-data`
+  with a small artificial latency.
+
+**The export `api` is the toggle.** A single line at the bottom
+of `client.ts` selects the active implementation:
+
 ```typescript
-// src/api/client.ts
+// To use the real backend:
+export const api: MedRackApi = httpApi;
+
+// To use the mock (development, demos):
+export const api: MedRackApi = mockApi;
+```
+
+`listProjects()` has no backend endpoint (projects are a
+frontend-only abstraction per the Frontend Handoff Package),
+so the recommended production shape is:
+
+```typescript
+const httpApiWithMockProjects: MedRackApi = {
+  ...httpApi,
+  listProjects: () => mockApi.listProjects(),
+};
+export const api: MedRackApi = httpApiWithMockProjects;
+```
+
+**Environment variable**: `VITE_MEDRACK_API_BASE` (set in
+`.env`; see `.env.example`). Vite reads it at build time.
+
+The recommended client setup below is the reference
+implementation:
+
+```typescript
+// src/lib/api/client.ts
 const API_BASE_URL =
-  import.meta.env?.VITE_API_BASE_URL ||
-  process.env?.REACT_APP_API_BASE_URL ||
+  (import.meta.env.VITE_MEDRACK_API_BASE as string | undefined) ??
   'http://localhost:8000/api/v1';
 
 const TIMEOUTS = {
