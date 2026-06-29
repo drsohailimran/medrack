@@ -37,7 +37,13 @@ from typing import Any, Dict, List, Optional
 
 from medrack.ingest.index import query as vector_query
 from medrack.retrieval.analyzer import QuestionAnalyzer, QuestionAnalysis
-from medrack.retrieval.reranker import MetadataBoostReranker, Reranker
+from medrack.retrieval.blueprint_retrieval import BlueprintRetrieval
+from medrack.retrieval.rerankers import (
+    Reranker,
+    HeuristicReranker,
+    IdentityReranker,
+)
+from medrack.retrieval.reranker import MetadataBoostReranker
 from medrack.retrieval.strategy import AdaptiveStrategy, RetrievalStrategy
 
 
@@ -66,6 +72,11 @@ class RetrievalResult:
     metadata_filter_active:
         True iff a non-empty :class:`MetadataFilter` was applied at
         the index layer.
+    blueprint_spec:
+        Optional :class:`BlueprintRetrieval` consumed by the
+        reranker. ``None`` if the caller did not provide a planner
+        blueprint. The v1 retrieval layer does not produce this
+        internally; the answer pipeline (future phase) will.
     """
 
     chunks: List[Dict[str, Any]]
@@ -74,6 +85,7 @@ class RetrievalResult:
     rerank_latency_seconds: float
     top_k: int
     metadata_filter_active: bool
+    blueprint_spec: Optional[BlueprintRetrieval] = None
 
 
 class RetrievalEngine:
@@ -90,11 +102,20 @@ class RetrievalEngine:
         *,
         analyzer: Optional[QuestionAnalyzer] = None,
         strategy: Optional[RetrievalStrategy] = None,
-        reranker: Optional[Reranker] = None,
+        metadata_reranker: Optional[MetadataBoostReranker] = None,
+        semantic_reranker: Optional[Reranker] = None,
     ) -> None:
         self.analyzer = analyzer or QuestionAnalyzer()
         self.strategy = strategy or AdaptiveStrategy()
-        self.reranker = reranker or MetadataBoostReranker()
+        # Phase 7: metadata-boost reranker (the existing
+        # v1 reranker). Default is the v1 implementation.
+        self.metadata_reranker = metadata_reranker or MetadataBoostReranker()
+        # Phase 10: semantic reranker (generic, pluggable).
+        # Default is IdentityReranker (no-op) so the system still
+        # functions correctly if reranking is disabled. The
+        # operator can opt in to HeuristicReranker or a future
+        # cross-encoder by passing it in.
+        self.semantic_reranker = semantic_reranker or IdentityReranker()
 
     def retrieve(
         self,
@@ -103,6 +124,7 @@ class RetrievalEngine:
         subject: str,
         query_embedding: List[float],
         marks: int | None = None,
+        blueprint_spec: Optional[BlueprintRetrieval] = None,
     ) -> RetrievalResult:
         """Retrieve chunks for a question.
 
@@ -119,6 +141,12 @@ class RetrievalEngine:
         marks:
             Optional explicit marks value (5 or 10). If None, the
             analyzer looks at the question dict.
+        blueprint_spec:
+            Optional :class:`BlueprintRetrieval` (Phase 9). When
+            provided, the cross-encoder reranker uses
+            ``required_metadata_categories`` to boost matching chunks.
+            When None, the reranker is a no-op (the system still
+            functions correctly).
 
         Returns
         -------
@@ -142,18 +170,37 @@ class RetrievalEngine:
         )
         retrieval_latency = time.perf_counter() - t0
 
-        # 4. Rerank.
+        # 4. Metadata-boost rerank (Phase 7).
         t0 = time.perf_counter()
-        reranked = self.reranker.rerank(raw, analysis)
-        rerank_latency = time.perf_counter() - t0
+        after_metadata_boost = self.metadata_reranker.rerank(raw, analysis)
+        meta_rerank_latency = time.perf_counter() - t0
+
+        # 5. Semantic rerank (Phase 10, generic Reranker interface).
+        #    This is the pluggable final stage. Default is
+        #    IdentityReranker (no-op); operators can swap in
+        #    HeuristicReranker, a future CrossEncoderReranker,
+        #    BGEReranker, or any other semantic reranker. It
+        #    accepts the Blueprint Retrieval spec for
+        #    section-aware boosting.
+        t0 = time.perf_counter()
+        after_semantic = self.semantic_reranker.rerank(
+            question=question.get("question_text", ""),
+            chunks=after_metadata_boost,
+            blueprint_spec=blueprint_spec,
+        )
+        sem_rerank_latency = time.perf_counter() - t0
+
+        # Total rerank latency = both stages combined
+        rerank_latency = meta_rerank_latency + sem_rerank_latency
 
         return RetrievalResult(
-            chunks=reranked,
+            chunks=after_semantic,
             analysis=analysis,
             retrieval_latency_seconds=retrieval_latency,
             rerank_latency_seconds=rerank_latency,
             top_k=plan.top_k,
             metadata_filter_active=not plan.metadata_filter.is_empty(),
+            blueprint_spec=blueprint_spec,
         )
 
 
@@ -163,10 +210,11 @@ def retrieve_for_question(
     subject: str,
     query_embedding: List[float],
     marks: int | None = None,
+    blueprint_spec: Optional[BlueprintRetrieval] = None,
 ) -> RetrievalResult:
     """Module-level convenience: default engine, default config.
 
-    This is the v7 entry point. It replaces the direct
+    The v7 entry point. Replaces the direct
     ``medrack.ingest.index.query(...)`` call the answer pipeline used
     in earlier phases.
     """
@@ -176,6 +224,7 @@ def retrieve_for_question(
         subject=subject,
         query_embedding=query_embedding,
         marks=marks,
+        blueprint_spec=blueprint_spec,
     )
 
 

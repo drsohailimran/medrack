@@ -58,6 +58,12 @@ from medrack.retrieval.blueprint_retrieval import (
     DEFAULT_MIN_CHUNKS,
     DEFAULT_MAX_CHUNKS,
 )
+from medrack.retrieval.rerankers import (
+    Reranker as SemanticReranker,
+    HeuristicReranker,
+    IdentityReranker,
+    truncate_top_n,
+)
 
 __all__ = [
     "AdaptiveStrategy",
@@ -79,4 +85,8 @@ __all__ = [
     "PRIORITY_OPTIONAL",
     "DEFAULT_MIN_CHUNKS",
     "DEFAULT_MAX_CHUNKS",
+    "SemanticReranker",
+    "HeuristicReranker",
+    "IdentityReranker",
+    "truncate_top_n",
 ]
