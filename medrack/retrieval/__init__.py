@@ -48,6 +48,16 @@ from medrack.retrieval.strategy import (
 from medrack.retrieval.analyzer import QuestionAnalyzer, QuestionAnalysis
 from medrack.retrieval.reranker import MetadataBoostReranker, Reranker
 from medrack.retrieval.engine import RetrievalEngine, RetrievalResult, retrieve_for_question
+from medrack.retrieval.blueprint_retrieval import (
+    BlueprintRetrieval,
+    SectionRetrievalSpec,
+    build_blueprint_retrieval,
+    PRIORITY_REQUIRED,
+    PRIORITY_RECOMMENDED,
+    PRIORITY_OPTIONAL,
+    DEFAULT_MIN_CHUNKS,
+    DEFAULT_MAX_CHUNKS,
+)
 
 __all__ = [
     "AdaptiveStrategy",
@@ -61,4 +71,12 @@ __all__ = [
     "RetrievalEngine",
     "RetrievalResult",
     "retrieve_for_question",
+    "BlueprintRetrieval",
+    "SectionRetrievalSpec",
+    "build_blueprint_retrieval",
+    "PRIORITY_REQUIRED",
+    "PRIORITY_RECOMMENDED",
+    "PRIORITY_OPTIONAL",
+    "DEFAULT_MIN_CHUNKS",
+    "DEFAULT_MAX_CHUNKS",
 ]
