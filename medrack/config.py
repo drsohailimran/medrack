@@ -84,14 +84,74 @@ LLM_FALLBACK_CHAIN = ["deepseek-v4-pro", "kimi-k2.7-code", "glm-5.2"]   # tried 
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SEC = 2.0   # exponential backoff base
 
-# ----- Answer targets -----
-
-THEORY_LONG_TARGET_WORDS = 500   # 10-mark question (target 450-550, ±10% = 450-550)
-THEORY_SHORT_TARGET_WORDS = 300  # 5-mark question (target 250-350, ±17% = 249-351)
-THEORY_WORD_TOLERANCE = 0.10  # ±10% (the 10-mark range; 5-mark accepts ±17% at runtime)
+# ----- Answer targets (operator-set 2026-06-29, directive v1.0) -----
+# 10-mark theory: 700-850 words (midpoint 775, ±10% = 697-852)
+# 5-mark theory:  450-500 words (midpoint 475, ±10% = 427-522)
+# MCQ explanation: 250-300 words (midpoint 275, ±10% = 247-302)
+# The prompt template says "~{N} words (±10%)" so the LLM gets a
+# midpoint target with a tight tolerance band. If the LLM interprets
+# the target as a *minimum* (observed behaviour with qwen3.7-max),
+# answers tend to come in 5-10% over the midpoint, which is fine.
+THEORY_LONG_TARGET_WORDS = 775   # 10-mark question
+THEORY_SHORT_TARGET_WORDS = 475  # 5-mark question
+THEORY_WORD_TOLERANCE = 0.10  # ±10% applied to both long and short
 THEORY_DEFAULT_MARKS = 10  # used when a theory question has no explicit marks
-MCQ_EXPLANATION_TARGET_WORDS = 300
-MCQ_EXPLANATION_WORD_TOLERANCE = 0.33  # ±33%
+MCQ_EXPLANATION_TARGET_WORDS = 275
+MCQ_EXPLANATION_WORD_TOLERANCE = 0.10  # tightened from 0.33 in the same directive
+
+# ----- Subject-aware prompt contexts (Phase 2, directive v1.0) -----
+# Per-subject metadata that drives the prompt templates. The prompt
+# builders (medrack.answer.prompt) read from this dict and substitute
+# subject-specific language into the template. Adding a new subject
+# means adding an entry here — the prompt builders do not need to
+# change.
+#
+# Schema (all fields are str; missing fields fall back to a generic
+# default at prompt-build time so a half-populated entry is safe):
+#   display         : human-readable name used in the LLM system prompt
+#   reference_text  : primary textbook citation
+#   indian_context  : subject-specific Indian context the LLM should use
+#   key_sources     : authoritative source names the LLM may reference
+#                     (without parenthetical citation, per the
+#                     exam-prep no-citation rule)
+#   framework       : the dominant analytical framework for the subject
+#   fallback        : (bool) if True, this is a generic fallback used
+#                     when a subject has no entry in this dict. Only
+#                     "generic" should have this set True.
+SUBJECT_CONTEXTS: dict[str, dict[str, str]] = {
+    "psm": {
+        "display": "PSM / Community Medicine",
+        "reference_text": "K. Park's \"Preventive & Social Medicine\" 27th edition",
+        "indian_context": (
+            "national programmes (NHM, NVBDCP, RNTCP, Ayushman Bharat, "
+            "Pulse Polio, NACP, NVHCP, IDSP, NTEP, NLEP), NFHS-5 data, "
+            "SRS, IMR, MMR, U5MR, TFR, CBR, CDR"
+        ),
+        "key_sources": "WHO, ICMR, MoHFW, NFHS, SRS, UNICEF India",
+        "framework": "primary / secondary / tertiary prevention (Park's framework); levels of prevention; natural history of disease",
+    },
+    "fmt": {
+        "display": "Forensic Medicine & Toxicology",
+        "reference_text": "K.S. Narayan Reddy's \"Essentials of Forensic Medicine\" 34th edition",
+        "indian_context": (
+            "Indian Penal Code (IPC), Code of Criminal Procedure (CrPC), "
+            "Indian Evidence Act (IEA), MTP Act 1971 (amended 2021), "
+            "POCSO Act 2012, Mental Healthcare Act 2017, BNSS 2023, "
+            "BNS 2023, NDPS Act, Consumer Protection Act 2019 (medical "
+            "negligence), Transgender Persons Act 2019"
+        ),
+        "key_sources": "ICMR, Supreme Court of India guidelines, MoHFW, NIMHANS",
+        "framework": "identification (race, age, sex, stature, DNA, fingerprints); forensic toxicology principles; medical jurisprudence; consent and negligence",
+    },
+    "generic": {
+        "display": "MBBS",
+        "reference_text": "standard MBBS textbook for the subject",
+        "indian_context": "Indian epidemiological data, national health programmes, MCI/NMC curriculum",
+        "key_sources": "WHO, ICMR, MoHFW",
+        "framework": "subject-specific analytical framework",
+        "fallback": "true",
+    },
+}
 
 # ----- Embeddings (local, sentence-transformers) -----
 

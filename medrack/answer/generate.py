@@ -68,7 +68,12 @@ def _embed_query(question_text: str) -> list[float]:
     return vec[0].tolist()
 
 
-def _build_prompt(question: dict, chunk_texts: list[str], marks: int | None = None):
+def _build_prompt(
+    question: dict,
+    chunk_texts: list[str],
+    marks: int | None = None,
+    subject: str = "psm",
+):
     """Return ``(BuildResult, system_template_label)``.
 
     Picks the MCQ or Theory template based on ``question["type"]``.
@@ -79,6 +84,10 @@ def _build_prompt(question: dict, chunk_texts: list[str], marks: int | None = No
         chunk_texts: retrieved KB chunks for the question.
         marks: target marks value (5 or 10) for theory questions. If
             None, falls back to the configured default.
+        subject: subject key for the subject-aware prompt context
+            (Phase 2, directive v1.0). Defaults to ``"psm"`` for
+            backward compatibility; unknown subjects fall back to the
+            ``generic`` entry inside the prompt builder.
     """
     qtype = question.get("type")
     if qtype == "mcq":
@@ -86,6 +95,7 @@ def _build_prompt(question: dict, chunk_texts: list[str], marks: int | None = No
             question_text=question["question_text"],
             options=question.get("options", {}),
             retrieved_chunks=chunk_texts,
+            subject=subject,
         )
     if qtype == "theory":
         # Use the question's marks (5 or 10) to set the answer length.
@@ -99,6 +109,7 @@ def _build_prompt(question: dict, chunk_texts: list[str], marks: int | None = No
             question_text=question["question_text"],
             retrieved_chunks=chunk_texts,
             marks=marks,
+            subject=subject,
         )
     raise ValueError(
         f"Unknown question type: {qtype!r}. Expected 'mcq' or 'theory'."
@@ -258,8 +269,9 @@ def generate_answer(
         "Retrieved %d chunks from kb_%s", len(retrieval_chunks), subject,
     )
 
-    # Step 4: build the prompt (MCQ or Theory).
-    build_result = _build_prompt(question, chunk_texts, marks=marks)
+    # Step 4: build the prompt (MCQ or Theory). Subject flows through
+    # to the prompt builder for subject-aware context (Phase 2).
+    build_result = _build_prompt(question, chunk_texts, marks=marks, subject=subject)
     system_template = build_result.system_template
 
     # Step 5: call the LLM.

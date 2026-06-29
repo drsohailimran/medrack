@@ -76,6 +76,7 @@ def test_generate_uses_mcq_prompt_for_mcq_question(temp_home, mock_llm):
 
 
 def test_generate_uses_theory_prompt_for_theory_question(temp_home, mock_llm):
+    from medrack import config
     theory_q = {**MCQ_QUESTION, "type": "theory", "options": {}, "answer": None}
     theory_q["question_text"] = "Discuss the social determinants of health."
     generate_answer(
@@ -86,8 +87,9 @@ def test_generate_uses_theory_prompt_for_theory_question(temp_home, mock_llm):
     prompt = call_args[0][0] if call_args[0] else call_args.kwargs.get("prompt", "")
     # Theory prompt has "Definition" section
     assert "Definition" in prompt
-    # 10-mark (default) target is 500 words per the operator-requested range
-    assert "500" in prompt  # word count target
+    # 10-mark (default) target is THEORY_LONG_TARGET_WORDS words (operator-set
+    # via medrack.config; was 500, currently 775 per directive v1.0).
+    assert str(config.THEORY_LONG_TARGET_WORDS) in prompt
 
 
 def test_generate_returns_from_cache_on_second_call(temp_home, mock_llm):
