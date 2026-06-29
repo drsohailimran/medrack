@@ -88,7 +88,10 @@ class CacheService:
         stale_qids: set = set()
         if stale_only or subject is not None:
             for subj in ([subject] if subject else ["psm", "fmt"]):
-                stale_qids.update(s["qid"] for s in find_stale_answers(subject=subj))
+                # find_stale_answers takes module_name (e.g. "psm-module-1")
+                # but for the cache scan we want all modules. Pass None.
+                for s in find_stale_answers(module_name=None):
+                    stale_qids.add(s.get("qid"))
         entries: List[CacheEntry] = []
         cache_root = self._home / "cache"
         if not cache_root.exists():
