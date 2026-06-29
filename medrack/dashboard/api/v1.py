@@ -272,6 +272,26 @@ def make_router() -> APIRouter:
     ):
         return [e.to_dict() for e in cache.list_entries(subject, stale_only)]
 
+    @router.get("/cache/entries/{qid}")
+    def get_cache_entry(qid: str):
+        """Fetch a single cache entry by qid.
+
+        Returns the raw cached dict (answer_text, pdf_path,
+        stale flag, etc.) so a frontend can display the
+        cached answer without re-generating.
+
+        Errors:
+          404 CACHE_ENTRY_NOT_FOUND if no entry exists.
+        """
+        data = cache.get_entry(qid)
+        if data is None:
+            return error_response(
+                status_code=404,
+                error_code="CACHE_ENTRY_NOT_FOUND",
+                message=f"cache entry not found: {qid}",
+            )
+        return data
+
     @router.get("/cache/status")
     def cache_status():
         return cache.get_status()

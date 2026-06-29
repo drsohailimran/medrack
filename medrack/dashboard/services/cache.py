@@ -167,5 +167,23 @@ class CacheService:
             return {"ok": True, "qid": qid, "marked_stale": True}
         return {"ok": False, "qid": qid, "error": "cache entry not found"}
 
+    def get_entry(self, qid: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single cache entry by qid.
+
+        Returns the raw cached dict (answer_text, pdf_path,
+        stale flag, etc.) or None if not found.
+
+        This is a read-only operation. It does not modify the
+        cache file.
+        """
+        cache_root = self._home / "cache"
+        for cache_file in cache_root.rglob(f"{qid}.json"):
+            try:
+                with cache_file.open() as f:
+                    return json.load(f)
+            except Exception:
+                continue
+        return None
+
 
 __all__ = ["CacheService", "CacheEntry"]
