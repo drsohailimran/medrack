@@ -37,7 +37,7 @@ def test_cmd_preview_calls_cli_cmd_preview():
         captured["module"] = args.module
         captured["chapter"] = args.chapter
         return 5  # error
-    with patch("medrack.bot.app.cli.cmd_preview", mock_preview):
+    with patch("medrack.bot.app.orchestrate.cmd_preview", mock_preview):
         asyncio.run(cmd_preview(update, context))
     assert captured["module"] == "psm-module-1"
     assert captured["chapter"] == "chapter 1"
@@ -54,8 +54,8 @@ def test_cmd_preview_with_successful_state_sends_pdf(tmp_path):
     update = make_update()
     context = MagicMock()
     context.args = ["psm-module-1"]
-    with patch("medrack.bot.app.cli.cmd_preview", return_value=0):
-        with patch("medrack.bot.app.cli._load_preview_state", return_value=state):
+    with patch("medrack.bot.app.orchestrate.cmd_preview", return_value=0):
+        with patch("medrack.bot.app.load_preview_state", return_value=state):
             asyncio.run(cmd_preview(update, context))
     # The PDF should be sent
     update.message.reply_document.assert_awaited_once()
@@ -65,7 +65,7 @@ def test_cmd_approve_runs_full_batch():
     from medrack.bot.app import cmd_approve
     update = make_update()
     context = MagicMock()
-    with patch("medrack.bot.app.cli.cmd_approve", return_value=0):
+    with patch("medrack.bot.app.orchestrate.cmd_approve", return_value=0):
         with patch("medrack.bot.app.config.get_medrack_home", return_value=Path("/nonexistent")):
             asyncio.run(cmd_approve(update, context))
     update.message.reply_text.assert_awaited_once()
@@ -91,7 +91,7 @@ def test_cmd_revise_calls_cli_cmd_revise():
         captured["axis"] = args.axis
         captured["notes"] = args.notes
         return 0
-    with patch("medrack.bot.app.cli.cmd_revise", mock_revise):
+    with patch("medrack.bot.app.orchestrate.cmd_revise", mock_revise):
         asyncio.run(cmd_revise(update, context))
     assert captured["axis"] == "wordcount"
     assert captured["notes"] == "1500 more notes"
@@ -101,7 +101,7 @@ def test_cmd_cancel_calls_cli_cmd_cancel():
     from medrack.bot.app import cmd_cancel
     update = make_update()
     context = MagicMock()
-    with patch("medrack.bot.app.cli.cmd_cancel", return_value=0):
+    with patch("medrack.bot.app.orchestrate.cmd_cancel", return_value=0):
         asyncio.run(cmd_cancel(update, context))
     update.message.reply_text.assert_awaited_once()
     sent = update.message.reply_text.await_args.args[0]

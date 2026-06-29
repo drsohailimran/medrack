@@ -54,7 +54,7 @@ def test_action_button_dispatches_to_cli(tmp_path):
     def mock_preview(args):
         captured["args"] = args
         return 0
-    with patch("medrack.dashboard.app.cli.cmd_preview", mock_preview):
+    with patch("medrack.dashboard.app.orchestrate.cmd_preview", mock_preview):
         result = _action_button_handler("psm-module-1", "preview")
     assert "preview" in result
     assert "rc=0" in result

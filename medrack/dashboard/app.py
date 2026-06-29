@@ -6,8 +6,9 @@ import re
 
 import gradio as gr
 
-import medrack.cli as cli
 import medrack.config as config
+import medrack.orchestrate as orchestrate
+from medrack.state import load_preview_state
 from medrack.config import DATA_DIRS, Subject, get_medrack_home
 from medrack.ingest.manifest import get_manifest_path
 from medrack.module.storage import list_modules, module_dir
@@ -289,7 +290,7 @@ def _ingest_kb_handler(pdf_file, subject, book_title, replace, progress=gr.Progr
         book=book_title,
         replace=replace,
     )
-    return cli.cmd_ingest_book(args) or "done"
+    return orchestrate.cmd_ingest_book(args) or "done"
 
 
 def _ingest_module_handler(pdf_file, subject, module_name, format_choice, progress=gr.Progress()):
@@ -311,7 +312,7 @@ def _ingest_module_handler(pdf_file, subject, module_name, format_choice, progre
         name=module_name,
         format=format_choice,
     )
-    return cli.cmd_ingest_module(args) or "done"
+    return orchestrate.cmd_ingest_module(args) or "done"
 
 
 def _list_modules_handler() -> list[list[str]]:
@@ -358,14 +359,14 @@ def _action_button_handler(module_name: str, action: str) -> str:
         args = argparse.Namespace(
             module=module_name, chapter="all", subject=None, reanswer=False,
         )
-        rc = cli.cmd_preview(args)
+        rc = orchestrate.cmd_preview(args)
     elif action == "approve":
-        rc = cli.cmd_approve(argparse.Namespace())
+        rc = orchestrate.cmd_approve(argparse.Namespace())
     elif action == "revise":
         args = argparse.Namespace(axis="wordcount", notes="1500")
-        rc = cli.cmd_revise(args)
+        rc = orchestrate.cmd_revise(args)
     elif action == "cancel":
-        rc = cli.cmd_cancel(argparse.Namespace())
+        rc = orchestrate.cmd_cancel(argparse.Namespace())
     else:
         return f"ERROR: unknown action: {action}"
     return f"action={action} rc={rc}"
@@ -388,8 +389,8 @@ def _run_preview_handler(module_name: str, chapter: str) -> tuple[str, str | Non
         module=module_name, chapter=chapter or "all",
         subject=None, reanswer=False,
     )
-    rc = cli.cmd_preview(args)
-    state = cli._load_preview_state()
+    rc = orchestrate.cmd_preview(args)
+    state = load_preview_state()
     if rc == 0 and state:
         return (f"Preview PDF: {state.get('pdf_path')}", state.get("pdf_path"))
     return (f"rc={rc}", None)

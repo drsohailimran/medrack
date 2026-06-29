@@ -18,9 +18,9 @@ from pathlib import Path
 
 # Imports for the T2 informational handlers. T3 and T4 will also need
 # these (T3 patches ``cli.cmd_*`` and uses ``config.get_medrack_home``).
-import medrack.cli as cli
 import medrack.config as config
-from medrack.cli import _load_preview_state
+import medrack.orchestrate as orchestrate
+from medrack.state import load_preview_state
 from medrack.ingest.manifest import list_books
 from medrack.module.storage import list_modules, load_extracted
 from telegram.ext import Application, CommandHandler
@@ -144,7 +144,7 @@ async def cmd_status(update, context):
     modules = list_modules()
     n_books = len(books) if isinstance(books, list) else len(list(books))
     n_modules = len(modules)
-    state = _load_preview_state()
+    state = load_preview_state()
     state_line = f"  preview: {state.get('module', '?')}" if state else "  preview: (none)"
     text = (
         f"*MedRack system state:*\n\n"
@@ -170,11 +170,11 @@ async def cmd_preview(update, context):
         ns = argparse.Namespace(
             module=module_name, chapter=chapter, subject=None, reanswer=False,
         )
-        rc = cli.cmd_preview(ns)
+        rc = orchestrate.cmd_preview(ns)
     except Exception as exc:
         await update.message.reply_text(f"ERROR: {exc}")
         return
-    state = cli._load_preview_state()
+    state = load_preview_state()
     # state is wrapped in {"last_preview": {...}}. For backwards compat
     # with test fixtures, also accept a flat shape where "pdf_path" is
     # at the top level.
@@ -196,7 +196,7 @@ async def cmd_preview(update, context):
 async def cmd_approve(update, context):
     """Handle /approve — run the full batch."""
     try:
-        rc = cli.cmd_approve(argparse.Namespace())
+        rc = orchestrate.cmd_approve(argparse.Namespace())
     except Exception as exc:
         await update.message.reply_text(f"ERROR: {exc}")
         return
@@ -225,7 +225,7 @@ async def cmd_revise(update, context):
     axis = args[0]
     notes = " ".join(args[1:])
     try:
-        rc = cli.cmd_revise(argparse.Namespace(axis=axis, notes=notes))
+        rc = orchestrate.cmd_revise(argparse.Namespace(axis=axis, notes=notes))
     except Exception as exc:
         await update.message.reply_text(f"ERROR: {exc}")
         return
@@ -235,7 +235,7 @@ async def cmd_revise(update, context):
 async def cmd_cancel(update, context):
     """Handle /cancel — clear the preview state."""
     try:
-        rc = cli.cmd_cancel(argparse.Namespace())
+        rc = orchestrate.cmd_cancel(argparse.Namespace())
     except Exception as exc:
         await update.message.reply_text(f"ERROR: {exc}")
         return

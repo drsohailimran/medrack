@@ -37,7 +37,7 @@ def test_ingest_kb_handler_calls_cmd_ingest_book(tmp_path):
         captured["args"] = args
         return 0  # success
 
-    with patch("medrack.dashboard.app.cli.cmd_ingest_book", mock_ingest_book):
+    with patch("medrack.dashboard.app.orchestrate.cmd_ingest_book", mock_ingest_book):
         result = _ingest_kb_handler(fake_file, "psm", "My Book", True)
     assert result == "done"
     assert captured["args"].subject == "psm"
@@ -69,7 +69,7 @@ def test_ingest_module_handler_calls_cmd_ingest_module():
     def mock_ingest_module(args):
         captured["args"] = args
         return 0
-    with patch("medrack.dashboard.app.cli.cmd_ingest_module", mock_ingest_module):
+    with patch("medrack.dashboard.app.orchestrate.cmd_ingest_module", mock_ingest_module):
         result = _ingest_module_handler(fake_file, "psm", "good-name", "mcq")
     assert result == "done"
     assert captured["args"].subject == "psm"
