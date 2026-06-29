@@ -34,7 +34,40 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+
+# ----------------------------------------------------------------------
+# Error response shape (consistent across all endpoints)
+# ----------------------------------------------------------------------
+
+def error_response(
+    status_code: int,
+    error_code: str,
+    message: str,
+) -> JSONResponse:
+    """Build a consistent error response.
+
+    All API errors use this shape so frontends can rely on a
+    stable contract:
+
+    ``{"error_code": "RUN_NOT_FOUND", "detail": "run not found"}``
+
+    The ``error_code`` is a stable, machine-readable identifier
+    (uppercase snake_case). The ``detail`` is a human-readable
+    message suitable for display.
+
+    This wraps FastAPI's default HTTPException so the error
+    shape is uniform across the API.
+    """
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error_code": error_code,
+            "detail": message,
+        },
+    )
 
 
 # ----------------------------------------------------------------------
@@ -216,7 +249,11 @@ def make_router() -> APIRouter:
     def get_benchmark_run(run_id: str):
         data = benchmarks.get_run(run_id)
         if data is None:
-            raise HTTPException(status_code=404, detail="run not found")
+            return error_response(
+                status_code=404,
+                error_code="RUN_NOT_FOUND",
+                message=f"benchmark run not found: {run_id}",
+            )
         return data
 
     @router.get("/benchmarks/compare")
@@ -254,18 +291,26 @@ def make_router() -> APIRouter:
     @router.get("/logs/{name}")
     def tail_log(name: str, n: int = 100):
         if name not in ("ingestion", "generation", "validation", "benchmark"):
-            raise HTTPException(
+            return error_response(
                 status_code=400,
-                detail=f"unknown log: {name}",
+                error_code="UNKNOWN_LOG",
+                message=(
+                    f"unknown log: {name}. "
+                    f"Valid: ingestion, generation, validation, benchmark"
+                ),
             )
         return logs.tail(name, n)
 
     @router.get("/logs/{name}/search")
     def search_log(name: str, query: str = Query(...), n: int = 100):
         if name not in ("ingestion", "generation", "validation", "benchmark"):
-            raise HTTPException(
+            return error_response(
                 status_code=400,
-                detail=f"unknown log: {name}",
+                error_code="UNKNOWN_LOG",
+                message=(
+                    f"unknown log: {name}. "
+                    f"Valid: ingestion, generation, validation, benchmark"
+                ),
             )
         return logs.search(name, query, n)
 
