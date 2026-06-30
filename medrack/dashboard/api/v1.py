@@ -31,7 +31,7 @@ mounted into a larger FastAPI app or run standalone.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -79,7 +79,7 @@ class GenerateRequest(BaseModel):
     question_text: str
     subject: str
     marks: int = 10
-    question_type: str = "theory"
+    question_type: Literal["mcq", "theory"] = "theory"
     book_id: Optional[str] = None
     chapter: Optional[str] = None
 
