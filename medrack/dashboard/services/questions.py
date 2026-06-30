@@ -85,6 +85,7 @@ class QuestionService:
                 chapter=chapter,
                 question={
                     "qid": request.qid,
+                    "type": request.question_type,
                     "question_text": request.question_text,
                 },
                 llm_client=llm_client,

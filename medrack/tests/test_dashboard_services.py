@@ -98,6 +98,87 @@ def test_question_service_re_answer_stale_dry_run():
     assert result["dry_run"] is True
 
 
+def test_question_service_generate_propagates_question_type():
+    """Runtime regression: the question dict passed to
+    ``generate_answer`` must include ``type`` (``"mcq"`` or
+    ``"theory"``), or the pipeline raises ValueError. The
+    service must forward ``request.question_type`` into that
+    field, regardless of the caller (API or batch).
+    """
+    from medrack.dashboard.services import QuestionService, GenerationRequest
+    from unittest.mock import patch
+
+    svc = QuestionService()
+    req = GenerationRequest(
+        qid="rt_q001",
+        question_text="Discuss the management of diabetes mellitus.",
+        subject="psm",
+        marks=5,
+        question_type="theory",
+    )
+    captured: dict = {}
+
+    def fake_generate_answer(*, module_name, subject, chapter, question, llm_client,
+                            force_regenerate=False, marks=None):
+        captured["question"] = dict(question)
+        captured["module_name"] = module_name
+        captured["subject"] = subject
+        captured["chapter"] = chapter
+        captured["marks"] = marks
+        return {
+            "ok": True,
+            "answer_text": "MOCK",
+            "pdf_path": "/tmp/mock.pdf",
+            "tokens": 0,
+        }
+
+    with patch("medrack.answer.generate.generate_answer", side_effect=fake_generate_answer):
+        result = svc.generate(req)
+
+    assert result.ok is True
+    assert captured["question"]["type"] == "theory", (
+        f"Runtime bug: question_type was not propagated. "
+        f"Got question={captured['question']!r}"
+    )
+    assert captured["question"]["qid"] == "rt_q001"
+    assert captured["question"]["question_text"].startswith("Discuss")
+    # Backward-compat: defaults still work.
+    assert captured["module_name"] == "psm-default"
+    assert captured["subject"] == "psm"
+
+
+def test_question_service_generate_default_question_type_is_theory():
+    """When the caller does not set ``question_type`` (e.g. an
+    older API client that omits it), the service must default
+    to ``"theory"`` so the pipeline does not raise.
+    """
+    from medrack.dashboard.services import QuestionService, GenerationRequest
+    from unittest.mock import patch
+
+    svc = QuestionService()
+    # Build a request the old way: question_type is the
+    # dataclass default ("theory"). We don't override it.
+    req = GenerationRequest(
+        qid="rt_q002",
+        question_text="Old-style call without question_type.",
+        subject="fmt",
+        marks=10,
+    )
+    assert req.question_type == "theory"  # dataclass default
+
+    captured: dict = {}
+
+    def fake_generate_answer(*, module_name, subject, chapter, question, llm_client,
+                            force_regenerate=False, marks=None):
+        captured["type"] = question.get("type")
+        return {"ok": True, "answer_text": "OK", "pdf_path": None, "tokens": 0}
+
+    with patch("medrack.answer.generate.generate_answer", side_effect=fake_generate_answer):
+        svc.generate(req)
+
+    assert captured["type"] == "theory"
+
+
 # ----------------------------------------------------------------------
 # Service: PipelineService
 # ----------------------------------------------------------------------
