@@ -98,6 +98,18 @@ elif is_listening "$API_PORT"; then
 else
   log "Starting API v1 on port $API_PORT..."
   cd "$MEDRACK_PKG_DIR"
+
+  # Load the .env file (if present) so OPENCODE_ZEN_API_KEY and
+  # other secrets reach the API process. The file is mode 600,
+  # owned by the operator. We source it into the uvicorn env.
+  if [[ -f "$MEDRACK_HOME/.env" ]]; then
+    log "Loading env from $MEDRACK_HOME/.env"
+    set -a
+    # shellcheck disable=SC1090
+    source "$MEDRACK_HOME/.env"
+    set +a
+  fi
+
   nohup "$PY" -m uvicorn medrack.dashboard.api.v1:app \
     --host 0.0.0.0 --port "$API_PORT" --log-level info \
     >"$API_LOG" 2>&1 &
