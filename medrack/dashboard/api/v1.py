@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -167,6 +167,26 @@ def make_router() -> APIRouter:
     @router.post("/library/books/{book_id}/reindex")
     def reindex(book_id: str):
         return library.reindex(book_id)
+
+    @router.post("/library/question-banks/upload")
+    def upload_question_bank(
+        file: UploadFile = File(...),
+        name: str = Form(...),
+        subject: str = Form(...),
+        version: str = Form("v1"),
+    ):
+        """Upload a question-bank PDF. The backend extracts the questions
+        and saves the resulting bank as JSON in
+        ``$MEDRACK_HOME/tests/regression_datasets/{name}.json``. The bank
+        then appears in ``GET /library/question-banks``.
+        """
+        return library.upload_question_bank(
+            pdf_bytes=file.file.read(),
+            filename=file.filename or f"{name}.pdf",
+            name=name,
+            subject=subject,
+            version=version,
+        )
 
     # ---- Questions ----
 

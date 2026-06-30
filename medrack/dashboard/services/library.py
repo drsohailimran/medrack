@@ -203,6 +203,121 @@ class LibraryService:
                     continue
         return banks
 
+    def upload_question_bank(
+        self,
+        pdf_bytes: bytes,
+        filename: str,
+        name: str,
+        subject: str,
+        version: str = "v1",
+    ) -> Dict[str, Any]:
+        """Accept a question-bank PDF, extract questions, and save as a
+        regression-dataset JSON.
+
+        Strategy:
+        1. Write the uploaded PDF to a temp file in ``inbox/``.
+        2. Use the existing ``medrack.module.extract`` + ``medrack.module.mcq``
+           + ``medrack.module.llm_extract`` pipeline to pull questions.
+        3. Persist the bank as JSON in ``tests/regression_datasets/{name}.json``
+           so the existing ``list_question_banks`` picks it up.
+
+        Returns a dict with the bank info + the count of questions extracted.
+        """
+        import json
+        import tempfile
+
+        from medrack.module.extract import extract_module_pages
+        from medrack.module.mcq import extract_mcqs_from_pages
+        from medrack.module.llm_extract import extract_questions_with_llm
+
+        # 1. Persist the upload to inbox/ so the file has a stable path.
+        inbox = self._home / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(c for c in name if c.isalnum() or c in ("-", "_", ".")).strip() or "bank"
+        dest_pdf = inbox / f"{safe_stem}.pdf"
+        dest_pdf.write_bytes(pdf_bytes)
+
+        # 2. Extract pages.
+        pages = extract_module_pages(dest_pdf)
+        if not pages:
+            return {
+                "ok": False,
+                "error": "PDF had no extractable text pages",
+                "bank": None,
+            }
+
+        # 3. Run both extractors. The regex extractor is cheap and catches
+        #    well-formatted MCQs; the LLM extractor is a fallback for freeform
+        #    questions and theory prompts.
+        regex_questions = extract_mcqs_from_pages(pages) or []
+        try:
+            llm_questions = extract_questions_with_llm(
+                subject=subject,
+                pages_text=[p.get("text", "") for p in pages],
+            ) or []
+        except Exception as exc:
+            llm_questions = []
+            llm_error = f"LLM extraction skipped: {exc}"
+        else:
+            llm_error = None
+
+        # 4. Merge. Prefer the LLM result (richer schema); fall back to regex
+        #    when the LLM returned nothing. De-dupe by qid.
+        merged: list[dict] = []
+        seen_qids: set[str] = set()
+        for q in (llm_questions or []) + [
+            {
+                "qid": f"q{i + 1:03d}",
+                "module": name,
+                "subject": subject,
+                "section": getattr(q, "section", "") or "",
+                "topic": getattr(q, "topic", "") or "",
+                "marks": getattr(q, "marks", 0) or 0,
+                "difficulty": "",
+                "notes": "",
+                "question_text": getattr(q, "stem", "") or "",
+            }
+            for i, q in enumerate(regex_questions)
+        ]:
+            qid = q.get("qid") or f"q{len(merged) + 1:03d}"
+            if qid in seen_qids:
+                continue
+            seen_qids.add(qid)
+            q.setdefault("qid", qid)
+            q.setdefault("module", name)
+            q.setdefault("subject", subject)
+            merged.append(q)
+
+        # 5. Persist as a regression-dataset JSON.
+        ds_dir = self._home / "tests" / "regression_datasets"
+        ds_dir.mkdir(parents=True, exist_ok=True)
+        bank_path = ds_dir / f"{safe_stem}.json"
+        payload = {
+            "name": name,
+            "version": version,
+            "subject": subject,
+            "path": str(bank_path),
+            "questions": merged,
+            "_created": "LibraryService.upload_question_bank",
+            "_doc": "Auto-generated from uploaded PDF via API.",
+        }
+        bank_path.write_text(json.dumps(payload, indent=2))
+
+        result: Dict[str, Any] = {
+            "ok": True,
+            "bank": {
+                "name": name,
+                "version": version,
+                "subject": subject,
+                "path": str(bank_path),
+                "question_count": len(merged),
+                "source_pdf": str(dest_pdf),
+            },
+        }
+        if llm_error:
+            result["warning"] = llm_error
+        return result
+
     def get_ingestion_status(self, book_id: str) -> IngestionStatus:
         """Get the ingestion status for a single book.
 
