@@ -72,9 +72,11 @@ class QuestionService:
         not provide these, sensible defaults are inferred.
         """
         from medrack.answer.generate import generate_answer
-        from medrack.answer.llm import LLMClient
+        from medrack.state import get_llm_client
         import time
-        llm_client = LLMClient()
+        # Honor $MEDRACK_LLM_MODE so the dashboard path can run in mock
+        # mode for offline testing (the CLI already used this helper).
+        llm_client = get_llm_client()
         module_name = request.book_id or f"{request.subject}-default"
         chapter = request.chapter or "default"
         t0 = time.perf_counter()

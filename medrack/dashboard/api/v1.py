@@ -343,10 +343,21 @@ def make_app():
     This is the entry point for ``python -m medrack.dashboard.api.v1``.
     """
     from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
     app = FastAPI(
         title="MedRack Operator API",
         description="Stable JSON API for MedRack's backend services.",
         version="1.0.0",
+    )
+    # Allow cross-origin requests from the Lovable frontend (port 5173)
+    # and any other local/network frontend that may call this API.
+    # Without this, every fetch() from the browser is silently blocked.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     app.include_router(make_router())
 

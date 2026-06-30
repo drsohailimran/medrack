@@ -25,7 +25,7 @@ def build_dashboard() -> gr.Blocks:
 
     Tabs: Ingest | Modules | Preview | State.
     """
-    with gr.Blocks(title="MedRack Dashboard") as demo:
+    with gr.Blocks(title="MedRack Dashboard", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# MedRack Dashboard")
         with gr.Tabs():
             with gr.Tab("Ingest"):
@@ -285,7 +285,7 @@ def _ingest_kb_handler(pdf_file, subject, book_title, replace, progress=gr.Progr
     except ValueError as exc:
         return f"ERROR: invalid subject: {exc}"
     args = argparse.Namespace(
-        pdf=pdf_file.name,
+        pdf=pdf_file,
         subject=subject_enum.value,
         book=book_title,
         replace=replace,
@@ -307,7 +307,7 @@ def _ingest_module_handler(pdf_file, subject, module_name, format_choice, progre
     except ValueError as exc:
         return f"ERROR: invalid subject: {exc}"
     args = argparse.Namespace(
-        pdf=pdf_file.name,
+        pdf=pdf_file,
         subject=subject_enum.value,
         name=module_name,
         format=format_choice,
@@ -460,6 +460,5 @@ def main() -> int:
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
-        theme=gr.themes.Soft(),
     )
     return 0

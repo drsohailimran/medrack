@@ -11,6 +11,7 @@ Read operations are pure.
 """
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -142,25 +143,44 @@ class LibraryService:
     def list_books(self) -> List[BookInfo]:
         """List all textbooks in the library.
 
-        Returns books from the local filesystem (PDF files in
-        ``$MEDRACK_HOME/inbox/`` or ``books/``) plus indexed
-        books in the vector index.
+        Returns books from the manifest (indexed books) plus any
+        unindexed PDFs found on the filesystem.
         """
-        # Scan the inbox + books directories for PDFs
         seen: Dict[str, BookInfo] = {}
-        for sub in ("inbox", "books", "modules"):
+        # 1. Read indexed books from the manifest (source of truth)
+        try:
+            from medrack.ingest.manifest import load_manifest
+            manifest = load_manifest()
+            for book in manifest.get("books", []):
+                if book.get("archived_at"):
+                    continue
+                book_id = book.get("book_id", book.get("sha256", "")[:12])
+                seen[book_id] = BookInfo(
+                    book_id=book_id,
+                    title=book.get("title", "Untitled"),
+                    subject=book.get("subject", "unknown"),
+                    path=book.get("filename", ""),
+                    indexed=True,
+                    indexed_at=book.get("indexed_at"),
+                    chunk_count=book.get("chunks", 0),
+                )
+        except Exception:
+            pass  # manifest not yet created
+        # 2. Scan filesystem for unindexed PDFs
+        for sub in ("inbox", "books"):
             d = self._home / sub
             if not d.exists():
                 continue
             for pdf in d.rglob("*.pdf"):
                 book_id = pdf.stem
-                seen[book_id] = BookInfo(
-                    book_id=book_id,
-                    title=pdf.stem.replace("_", " ").title(),
-                    subject=self._infer_subject(pdf),
-                    path=str(pdf),
-                    indexed=False,  # not yet checked
-                )
+                if book_id not in seen:
+                    seen[book_id] = BookInfo(
+                        book_id=book_id,
+                        title=pdf.stem.replace("_", " ").title(),
+                        subject=self._infer_subject(pdf),
+                        path=str(pdf),
+                        indexed=False,
+                    )
         return list(seen.values())
 
     def list_question_banks(self) -> List[QuestionBankInfo]:
@@ -233,7 +253,7 @@ class LibraryService:
         Delegates to the existing CLI ingestion handler. Returns
         a summary dict.
         """
-        from medrack.state import Subject
+        from medrack.config import Subject
         from medrack.cli import _ingest_kb_handler  # type: ignore
         try:
             subj = Subject(subject)
@@ -247,7 +267,9 @@ class LibraryService:
             return {"ok": False, "error": f"file not found: {pdf_path}"}
         dest = inbox / src.name
         if not dest.exists():
-            src.copy(dest)
+            # Use shutil.copy instead of pathlib.Path.copy() — the
+            # latter is Python 3.14+ only (PEP 771).
+            shutil.copy(src, dest)
         # Run ingestion (via the CLI handler, which is what the
         # dashboard already uses)
         return {
