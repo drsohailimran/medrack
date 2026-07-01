@@ -100,6 +100,7 @@ STRUCTURE — this is important: organise the answer under SHORT SECTION HEADING
 - Under each heading, give the relevant "•" bullet points.
 - {answer_structure}
 
+For 3-mark questions: VERY short — just 3-5 crisp bullets (~100-150 words total), no long introduction and no separate Conclusion.
 For 5-mark questions: keep it tight — 2-3 headings and a short Conclusion.
 For 10-mark questions: 4-6 headings, each with several bullets, ending in a Conclusion.
 
@@ -308,8 +309,10 @@ def build_theory_prompt(
     # word_count_target is explicitly provided, use it; otherwise pick
     # based on the marks (5 → SHORT, 10 → LONG).
     if word_count_target is None:
-        if marks == 5:
-            from medrack import config as _cfg
+        from medrack import config as _cfg
+        if marks == 3:
+            word_count_target = _cfg.THEORY_VSHORT_TARGET_WORDS
+        elif marks == 5:
             word_count_target = _cfg.THEORY_SHORT_TARGET_WORDS
         else:
             word_count_target = THEORY_LONG_TARGET_WORDS

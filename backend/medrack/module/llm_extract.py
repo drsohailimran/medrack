@@ -57,7 +57,8 @@ def _build_prompt(subject: str, body: str) -> str:
         '  "type": "mcq" if the question has lettered options, else "theory",\n'
         '  "marks": the marks as an integer if stated near the question '
         '(e.g. "(10 marks)" -> 10, "5 M" -> 5, "Long answer" -> 10, '
-        '"Short note" -> 5), else null,\n'
+        '"Short note" -> 5, "3 marks" -> 3, "very short answer" -> 3), '
+        "else null,\n"
         '  "options": for MCQs, an object mapping "a"/"b"/"c"/"d"/... to '
         "option text; for theory questions use an empty object {},\n"
         '  "answer": the correct option letter for MCQs if an answer key is '
@@ -111,6 +112,9 @@ _MARK10_RE = re.compile(
 _MARK5_RE = re.compile(
     r"(?i)\b(?:5|five)\s*[-–]?\s*marks?\b|\bshort\s+answer|\bshort\s+notes?\b|\bSAQ\b"
 )
+_MARK3_RE = re.compile(
+    r"(?i)\b(?:3|three)\s*[-–]?\s*marks?\b|\bvery\s+short\s+answer|\bvery\s+short\s+notes?\b|\bVSA\b"
+)
 _QNUM_RE = re.compile(r"^\s*(?:Q\.?\s*)?\d+\s*[.\):]")
 
 
@@ -125,6 +129,9 @@ def _heading_marks(line: str) -> int | None:
         return None
     if _QNUM_RE.match(s) or s.endswith("?"):
         return None  # a question line, not a section heading
+    # 3 is checked before 5 so "very short answer" isn't caught by "short answer".
+    if _MARK3_RE.search(s):
+        return 3
     if _MARK10_RE.search(s):
         return 10
     if _MARK5_RE.search(s):

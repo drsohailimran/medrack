@@ -225,6 +225,7 @@ PROMPT_CONTEXT_MAX_CHARS_PER_CHUNK = 1500
 # answers tend to come in 5-10% over the midpoint, which is fine.
 THEORY_LONG_TARGET_WORDS = 750   # 10-mark question (~750 words)
 THEORY_SHORT_TARGET_WORDS = 375  # 5-mark question (~350-400 words)
+THEORY_VSHORT_TARGET_WORDS = 125  # 3-mark question (very short, ~100-150 words)
 THEORY_WORD_TOLERANCE = 0.10  # ±10% applied to both long and short
 THEORY_DEFAULT_MARKS = 10  # used when a theory question has no explicit marks
 MCQ_EXPLANATION_TARGET_WORDS = 275

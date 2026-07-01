@@ -83,8 +83,11 @@ export interface MedRackApi {
     subject: Subject;
     book_id?: string;
     marks?: number;
+    words_3?: number;
     words_5?: number;
     words_10?: number;
+    marks_filter?: number[];
+    chapters?: string[];
   }): Promise<JobHandle>;
   // Render a single answer to a real PDF (returns the PDF blob).
   renderAnswerPdf(args: {
@@ -450,10 +453,12 @@ export const httpApi: MedRackApi = {
     http(`/library/question-banks/${encodeURIComponent(name)}`, { method: "DELETE" }),
   getJob: (id) => http(`/jobs/${id}`),
   jobPdfUrl: (id) => `${BASE}/jobs/${id}/pdf`,
-  solveBank: ({ name, subject, book_id, marks = 10, words_5, words_10 }) =>
+  solveBank: ({ name, subject, book_id, marks = 10, words_3, words_5, words_10, marks_filter, chapters }) =>
     http("/banks/solve", {
       method: "POST",
-      body: JSON.stringify({ name, subject, book_id, marks, words_5, words_10 }),
+      body: JSON.stringify({
+        name, subject, book_id, marks, words_3, words_5, words_10, marks_filter, chapters,
+      }),
     }),
   renderAnswerPdf: async (args) => {
     const res = await fetch(`${BASE}/questions/render-pdf`, {

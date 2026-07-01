@@ -239,7 +239,7 @@ def generate_full_batch(
             # Per-question marks if the bank carries a valid 5/10; else the
             # caller-selected default (the UI "answer length" choice).
             q_marks = question.get("marks")
-            if q_marks not in (5, 10):
+            if q_marks not in (3, 5, 10):
                 q_marks = marks
             # Per-marks word target (the UI's two length boxes), keyed by
             # the resolved marks. None -> prompt builder derives from marks.

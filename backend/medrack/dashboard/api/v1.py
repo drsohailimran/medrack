@@ -122,8 +122,13 @@ class SolveBankRequest(BaseModel):
     marks: int = 10
     # Per-marks answer length (words). Each question uses the target for its
     # own marks; unset -> derived from marks by the prompt builder.
+    words_3: Optional[int] = None
     words_5: Optional[int] = None
     words_10: Optional[int] = None
+    # Filters. marks_filter: only solve questions with these marks (None = all).
+    # chapters: only solve questions in these chapters (None/empty = all).
+    marks_filter: Optional[list[int]] = None
+    chapters: Optional[list[str]] = None
 
 
 class RenderPdfRequest(BaseModel):
@@ -381,7 +386,8 @@ def make_router() -> APIRouter:
             "solve_bank",
             lambda job, progress: run_solve_bank(
                 job, progress, bank_name=req.name, subject=req.subject, book_id=req.book_id,
-                marks=req.marks, words_5=req.words_5, words_10=req.words_10,
+                marks=req.marks, words_3=req.words_3, words_5=req.words_5, words_10=req.words_10,
+                marks_filter=req.marks_filter, chapters=req.chapters,
             ),
         )
         return {"job_id": job.id, "kind": "solve_bank"}

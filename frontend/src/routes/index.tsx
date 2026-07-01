@@ -16,6 +16,7 @@ import { AppShell } from "@/components/app-shell";
 import { AnswerViewer } from "@/components/answer-viewer";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useJob } from "@/lib/use-job";
 import type { GenerationResult, Marks, Subject } from "@/lib/api";
@@ -62,6 +63,10 @@ function Workspace() {
   const [bookId, setBookId] = useState("");
   const [words10, setWords10] = usePersistedNumber("medrack:words10", 750);
   const [words5, setWords5] = usePersistedNumber("medrack:words5", 375);
+  const [words3, setWords3] = usePersistedNumber("medrack:words3", 125);
+  // Which marks to produce, and which chapters — default: everything.
+  const [selMarks, setSelMarks] = useState<Set<number>>(() => new Set([10, 5, 3]));
+  const [selChapters, setSelChapters] = useState<Set<string>>(() => new Set());
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -79,10 +84,63 @@ function Workspace() {
     queryFn: () => api.getBankQuestions(bankName),
     enabled: !!bankName,
   });
-  const firstQuestion = bankDetail?.questions?.[0];
-  // The preview uses the first question at its own marks (5 or 10, default 10).
-  const previewMarks: Marks = firstQuestion?.marks === 5 ? 5 : 10;
-  const previewWords = previewMarks === 5 ? words5 : words10;
+  const resolveMarks = (m?: number): number => (m === 3 || m === 5 || m === 10 ? m : 10);
+
+  // Distinct chapters present in the bank (drops empty / "unknown").
+  const chapters = useMemo(() => {
+    const set = new Set<string>();
+    for (const q of bankDetail?.questions ?? []) {
+      const c = (q.chapter ?? "").trim();
+      if (c && c.toLowerCase() !== "unknown") set.add(c);
+    }
+    return [...set];
+  }, [bankDetail]);
+  const chapterKey = chapters.join("|");
+
+  // When the bank (and thus its chapters) changes, select all chapters.
+  useEffect(() => {
+    setSelChapters(new Set(chapters));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterKey]);
+
+  // Count of questions per mark (for the mark tabs).
+  const marksCount = useMemo(() => {
+    const c: Record<number, number> = { 3: 0, 5: 0, 10: 0 };
+    for (const q of bankDetail?.questions ?? []) c[resolveMarks(q.marks)] += 1;
+    return c;
+  }, [bankDetail]);
+
+  // Questions matching the current filters (marks + chapters).
+  const filteredQuestions = useMemo(
+    () =>
+      (bankDetail?.questions ?? []).filter((q) => {
+        if (!selMarks.has(resolveMarks(q.marks))) return false;
+        if (chapters.length > 0 && !selChapters.has((q.chapter ?? "").trim())) return false;
+        return true;
+      }),
+    [bankDetail, selMarks, selChapters, chapters.length],
+  );
+
+  const firstQuestion = filteredQuestions[0];
+  const previewMarks: Marks =
+    firstQuestion?.marks === 3 ? 3 : firstQuestion?.marks === 5 ? 5 : 10;
+  const previewWords = previewMarks === 3 ? words3 : previewMarks === 5 ? words5 : words10;
+
+  const toggleMark = (m: number) =>
+    setSelMarks((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
+  const toggleChapter = (c: string) =>
+    setSelChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+  const allChaptersOn = chapters.length > 0 && selChapters.size === chapters.length;
 
   const indexedBooks = useMemo(() => (books ?? []).filter((b) => b.indexed), [books]);
   const selectedBook = useMemo(() => books?.find((b) => b.book_id === bookId), [books, bookId]);
@@ -120,8 +178,11 @@ function Workspace() {
         subject,
         book_id: bookId || undefined,
         marks: 10,
+        words_3: words3,
         words_5: words5,
         words_10: words10,
+        marks_filter: [...selMarks],
+        chapters: chapters.length > 0 ? [...selChapters] : undefined,
       });
     },
     onSuccess: (h) => {
@@ -264,10 +325,72 @@ function Workspace() {
             )}
           </Field>
 
-          <Field label="3 · Answer length (words)">
-            <div className="mt-1 grid grid-cols-2 gap-2">
-              <LengthBox label="10-mark answers" value={words10} onChange={setWords10} />
-              <LengthBox label="5-mark answers" value={words5} onChange={setWords5} />
+          <Field label="3 · Marks to include">
+            <div className="mt-1 flex gap-2">
+              {[10, 5, 3].map((m) => {
+                const on = selMarks.has(m);
+                const n = marksCount[m] ?? 0;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => toggleMark(m)}
+                    aria-pressed={on}
+                    className={cn(
+                      "flex-1 rounded-md border px-2 py-2 text-xs font-medium transition-colors",
+                      on
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:bg-surface-2",
+                    )}
+                  >
+                    {m}-mark{bankName ? ` (${n})` : ""}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Only ticked marks are produced. Select more than one to combine them.
+            </p>
+          </Field>
+
+          {chapters.length > 0 && (
+            <Field label="4 · Chapters">
+              <div className="mb-1 mt-1 flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground">
+                  {selChapters.size}/{chapters.length} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelChapters(allChaptersOn ? new Set() : new Set(chapters))}
+                  className="text-[10px] font-medium text-primary hover:underline"
+                >
+                  {allChaptersOn ? "Clear all" : "Select all"}
+                </button>
+              </div>
+              <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border border-border bg-background p-2">
+                {chapters.map((c) => (
+                  <label
+                    key={c}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-surface-2"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selChapters.has(c)}
+                      onChange={() => toggleChapter(c)}
+                      className="h-3.5 w-3.5 shrink-0 accent-primary"
+                    />
+                    <span className="min-w-0 truncate">{c}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+          )}
+
+          <Field label={`${chapters.length > 0 ? "5" : "4"} · Answer length (words)`}>
+            <div className="mt-1 grid grid-cols-3 gap-2">
+              <LengthBox label="10-mark" value={words10} onChange={setWords10} />
+              <LengthBox label="5-mark" value={words5} onChange={setWords5} />
+              <LengthBox label="3-mark" value={words3} onChange={setWords3} />
             </div>
             <p className="mt-1 text-[10px] text-muted-foreground">
               Each question is answered at the length for its own marks.
@@ -309,8 +432,14 @@ function Workspace() {
                 setError(null);
                 solveMutation.mutate();
               }}
-              disabled={!result?.answer_text || solving || solveMutation.isPending}
-              title="Generate answers for every question in the module and download one PDF"
+              disabled={
+                !result?.answer_text ||
+                solving ||
+                solveMutation.isPending ||
+                selMarks.size === 0 ||
+                (chapters.length > 0 && selChapters.size === 0)
+              }
+              title="Generate answers for the selected marks and chapters, and download one PDF"
             >
               {solving ? (
                 <>

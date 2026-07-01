@@ -19,7 +19,7 @@ export const KNOWN_SUBJECTS = [
 ] as const;
 
 export type Subject = string;
-export type Marks = 5 | 10 | 15;
+export type Marks = 3 | 5 | 10 | 15;
 export type QuestionType = "theory" | "mcq";
 export type IngestionStatusValue = "unknown" | "pending" | "running" | "succeeded" | "failed";
 
@@ -65,6 +65,7 @@ export interface BankQuestion {
   section?: string;
   topic?: string;
   subject?: string;
+  chapter?: string;
 }
 
 export interface BankQuestionsResponse {

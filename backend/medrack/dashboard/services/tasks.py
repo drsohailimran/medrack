@@ -306,7 +306,9 @@ def run_extract_bank(
 
 def run_solve_bank(
     job, progress: Progress, *, bank_name: str, subject: str, book_id: Optional[str] = None,
-    marks: int = 10, words_5: Optional[int] = None, words_10: Optional[int] = None,
+    marks: int = 10, words_3: Optional[int] = None, words_5: Optional[int] = None,
+    words_10: Optional[int] = None, marks_filter: Optional[list] = None,
+    chapters: Optional[list] = None,
 ) -> Dict[str, Any]:
     from medrack import config
     from medrack.answer.batch import generate_full_batch
@@ -322,23 +324,38 @@ def run_solve_bank(
     raw_questions = data.get("questions", [])
     subj = data.get("subject", subject) or subject
 
+    # Filters: which marks and which chapters to include (None = all).
+    sel_marks = set(marks_filter) if marks_filter else None
+    sel_chapters = {(c or "").strip().lower() for c in chapters} if chapters else None
+
     questions: List[dict] = []
     for i, q in enumerate(raw_questions):
         qtext = (q.get("question_text") or q.get("stem") or "").strip()
         if not qtext:
+            continue
+        q_marks = q.get("marks")
+        resolved_marks = q_marks if q_marks in (3, 5, 10) else marks
+        chap = (q.get("chapter") or q.get("module_chapter") or "").strip()
+        if sel_marks is not None and resolved_marks not in sel_marks:
+            continue
+        if sel_chapters is not None and chap.lower() not in sel_chapters:
             continue
         questions.append(
             {
                 "qid": q.get("qid") or f"{safe}::q{i + 1:03d}",
                 "type": q.get("type") or "theory",
                 "question_text": qtext,
-                "module_chapter": q.get("chapter") or q.get("module_chapter") or "unknown",
+                "module_chapter": chap or "unknown",
                 "options": q.get("options", {}) or {},
-                "marks": q.get("marks"),
+                "marks": q_marks,
             }
         )
     total = len(questions)
     if total == 0:
+        if sel_marks is not None or sel_chapters is not None:
+            raise ValueError(
+                "No questions match the selected marks/chapters. Adjust the filters."
+            )
         raise ValueError("This question bank has no answerable questions.")
 
     progress(3, f"Solving {total} question(s)")
@@ -350,6 +367,8 @@ def run_solve_bank(
 
     # Per-marks answer length from the UI's two length boxes.
     word_targets: dict = {}
+    if words_3:
+        word_targets[3] = words_3
     if words_5:
         word_targets[5] = words_5
     if words_10:
