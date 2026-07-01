@@ -1,0 +1,435 @@
+{
+  "info": {
+    "name": "MedRack API v1",
+    "description": "Complete API testing collection for the MedRack backend (v0.3.0-backend-freeze). 22 endpoints under /api/v1/*. Use the environment variables to point to your backend (default: http://localhost:8000).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "qid",
+      "value": "q001",
+      "type": "string"
+    },
+    {
+      "key": "bookId",
+      "value": "park_psm_v4",
+      "type": "string"
+    },
+    {
+      "key": "moduleName",
+      "value": "psm-module-1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Root",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": ["{{baseUrl}}"],
+              "path": [""]
+            },
+            "description": "API metadata (name, version, docs URL)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Version",
+      "item": [
+        {
+          "name": "GET /api/v1/version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/version",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "version"]
+            },
+            "description": "Get package, pipeline, and baseline version"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Library",
+      "item": [
+        {
+          "name": "GET /api/v1/library/books",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/books",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "books"]
+            },
+            "description": "List all textbooks"
+          }
+        },
+        {
+          "name": "POST /api/v1/library/books",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/books?pdf_path=/path/to/book.pdf&subject=psm&book_title=Park",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "books"],
+              "query": [
+                {"key": "pdf_path", "value": "/path/to/book.pdf"},
+                {"key": "subject", "value": "psm"},
+                {"key": "book_title", "value": "Park"}
+              ]
+            },
+            "description": "Add a book by ingesting a PDF"
+          }
+        },
+        {
+          "name": "GET /api/v1/library/question-banks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/question-banks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "question-banks"]
+            },
+            "description": "List all question banks (regression datasets)"
+          }
+        },
+        {
+          "name": "GET /api/v1/library/ingestion-status/{book_id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/ingestion-status/{{bookId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "ingestion-status", "{{bookId}}"]
+            },
+            "description": "Get ingestion status for a book. Poll until status='succeeded'."
+          }
+        },
+        {
+          "name": "DELETE /api/v1/library/books/{book_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/books/{{bookId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "books", "{{bookId}}"]
+            },
+            "description": "Remove a book (soft delete; moves PDF to trash)"
+          }
+        },
+        {
+          "name": "POST /api/v1/library/books/{book_id}/reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/library/books/{{bookId}}/reindex",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "library", "books", "{{bookId}}", "reindex"]
+            },
+            "description": "Re-index a book. Long-running; poll ingestion-status afterwards."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Questions",
+      "item": [
+        {
+          "name": "POST /api/v1/questions/generate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"qid\": \"{{qid}}\",\n  \"question_text\": \"Discuss the management of diabetes mellitus.\",\n  \"subject\": \"psm\",\n  \"marks\": 10,\n  \"question_type\": \"theory\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/questions/generate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "questions", "generate"]
+            },
+            "description": "Generate a single answer. May take 5-30s with real LLM."
+          }
+        },
+        {
+          "name": "POST /api/v1/questions/batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requests\": [\n    {\n      \"qid\": \"q001\",\n      \"question_text\": \"Discuss the management of diabetes.\",\n      \"subject\": \"psm\",\n      \"marks\": 10\n    },\n    {\n      \"qid\": \"q002\",\n      \"question_text\": \"Describe the epidemiology of TB.\",\n      \"subject\": \"psm\",\n      \"marks\": 5\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/questions/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "questions", "batch"]
+            },
+            "description": "Generate answers for a batch of questions. Sequential; 100-600s with real LLM."
+          }
+        },
+        {
+          "name": "POST /api/v1/questions/{qid}/revise",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"psm\",\n  \"revised_question_text\": \"Discuss the management and prevention of diabetes.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/questions/{{qid}}/revise",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "questions", "{{qid}}", "revise"]
+            },
+            "description": "Revise an existing answer with a new question text"
+          }
+        },
+        {
+          "name": "GET /api/v1/questions/stale",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/questions/stale?module_name={{moduleName}}&dry_run=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "questions", "stale"],
+              "query": [
+                {"key": "module_name", "value": "{{moduleName}}"},
+                {"key": "dry_run", "value": "true"}
+              ]
+            },
+            "description": "List stale cached answers (dry_run=true to preview without re-generating)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pipeline",
+      "item": [
+        {
+          "name": "GET /api/v1/pipeline/inspect",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/pipeline/inspect?qid={{qid}}&question_text=Discuss+the+management+of+diabetes&subject=psm&marks=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "pipeline", "inspect"],
+              "query": [
+                {"key": "qid", "value": "{{qid}}"},
+                {"key": "question_text", "value": "Discuss the management of diabetes"},
+                {"key": "subject", "value": "psm"},
+                {"key": "marks", "value": "10"}
+              ]
+            },
+            "description": "Inspect all 6 pipeline stages (Planner, Blueprint, Retrieval, Reranker, Writer, Validator)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validation",
+      "item": [
+        {
+          "name": "POST /api/v1/validation/validate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer\": \"Management: real content here.\\nEpidemiology: more content here.\",\n  \"blueprint\": null,\n  \"disabled_rules\": []\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/validation/validate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "validation", "validate"]
+            },
+            "description": "Run the validation pipeline against an answer"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Benchmarks",
+      "item": [
+        {
+          "name": "GET /api/v1/benchmarks/runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmarks/runs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "benchmarks", "runs"]
+            },
+            "description": "List all benchmark runs"
+          }
+        },
+        {
+          "name": "GET /api/v1/benchmarks/runs/{run_id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmarks/runs/20250629T193408Z",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "benchmarks", "runs", "20250629T193408Z"]
+            },
+            "description": "Get a full benchmark run report"
+          }
+        },
+        {
+          "name": "GET /api/v1/benchmarks/compare",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmarks/compare?run_a=run_a_id&run_b=run_b_id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "benchmarks", "compare"],
+              "query": [
+                {"key": "run_a", "value": "run_a_id"},
+                {"key": "run_b", "value": "run_b_id"}
+              ]
+            },
+            "description": "Compare two benchmark runs"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cache",
+      "item": [
+        {
+          "name": "GET /api/v1/cache/entries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cache/entries?subject=psm&stale_only=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "cache", "entries"],
+              "query": [
+                {"key": "subject", "value": "psm"},
+                {"key": "stale_only", "value": "false"}
+              ]
+            },
+            "description": "List cache entries, optionally filtered by subject and staleness"
+          }
+        },
+        {
+          "name": "GET /api/v1/cache/entries/{qid}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cache/entries/{{qid}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "cache", "entries", "{{qid}}"]
+            },
+            "description": "Get a single cache entry by qid (includes full answer_text and pdf_path)"
+          }
+        },
+        {
+          "name": "GET /api/v1/cache/status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cache/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "cache", "status"]
+            },
+            "description": "Get overall cache status (counts by subject and staleness)"
+          }
+        },
+        {
+          "name": "POST /api/v1/cache/reanswer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"qid\": \"{{qid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cache/reanswer",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "cache", "reanswer"]
+            },
+            "description": "Mark a cache entry as stale (for re-generation)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Logs",
+      "item": [
+        {
+          "name": "GET /api/v1/logs/{name}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/logs/ingestion?n=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "logs", "ingestion"],
+              "query": [
+                {"key": "n", "value": "100"}
+              ]
+            },
+            "description": "Tail a log file. Valid names: ingestion, generation, validation, benchmark."
+          }
+        },
+        {
+          "name": "GET /api/v1/logs/{name}/search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/logs/ingestion/search?query=error&n=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "logs", "ingestion", "search"],
+              "query": [
+                {"key": "query", "value": "error"},
+                {"key": "n", "value": "100"}
+              ]
+            },
+            "description": "Search a log file"
+          }
+        }
+      ]
+    }
+  ]
+}

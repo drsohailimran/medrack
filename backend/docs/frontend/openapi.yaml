@@ -1,0 +1,1036 @@
+openapi: 3.0.3
+info:
+  title: MedRack Operator API
+  description: |
+    Stable JSON API for MedRack's backend services. Exposes 22 endpoints
+    under `/api/v1/*` for frontend integration.
+
+    This is the v1 contract, frozen as of v0.3.0-backend-freeze.
+    Future versions (v2) will be added in parallel; v1 will not change.
+
+    See `/docs/frontend/API_REFERENCE.md` for the full reference.
+  version: 1.0.0
+  contact:
+    name: MedRack Backend
+    url: https://github.com/medrack
+  license:
+    name: Personal Edition
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: http://localhost:8000/api/v1
+    description: Local development (with API prefix)
+
+tags:
+  - name: root
+    description: API metadata
+  - name: version
+    description: Version information
+  - name: library
+    description: Textbook and question-bank management
+  - name: questions
+    description: Question generation operations
+  - name: pipeline
+    description: Pipeline stage inspection
+  - name: validation
+    description: Validation pipeline
+  - name: benchmarks
+    description: Benchmark history and reports
+  - name: cache
+    description: Cache management
+  - name: logs
+    description: Backend logs
+
+paths:
+  /:
+    get:
+      tags: [root]
+      summary: API metadata
+      operationId: getRoot
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RootResponse'
+              example:
+                name: MedRack Operator API
+                version: 1.0.0
+                docs: /docs
+                api: /api/v1
+
+  /api/v1/version:
+    get:
+      tags: [version]
+      summary: Get version information
+      operationId: getVersion
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+              example:
+                schema_version: 1
+                package_version: 0.3.0-backend-freeze
+                pipeline_versions:
+                  schema: 2
+                  prompt: 1
+                  retrieval: 1
+                  planner: 0
+                  validator: 0
+                  reranker: 0
+                  renderer: 1
+                benchmark_baseline_tag: phase-5-baseline
+
+  /api/v1/library/books:
+    get:
+      tags: [library]
+      summary: List all textbooks
+      operationId: listBooks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BookInfo'
+    post:
+      tags: [library]
+      summary: Add a book by ingesting a PDF
+      operationId: addBook
+      parameters:
+        - name: pdf_path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: subject
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [psm, fmt]
+        - name: book_title
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddBookResponse'
+
+  /api/v1/library/books/{book_id}:
+    delete:
+      tags: [library]
+      summary: Remove a book (soft delete)
+      operationId: removeBook
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveBookResponse'
+
+  /api/v1/library/books/{book_id}/reindex:
+    post:
+      tags: [library]
+      summary: Re-index a book
+      operationId: reindexBook
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddBookResponse'
+
+  /api/v1/library/ingestion-status/{book_id}:
+    get:
+      tags: [library]
+      summary: Get ingestion status for a book
+      operationId: getIngestionStatus
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionStatus'
+
+  /api/v1/library/question-banks:
+    get:
+      tags: [library]
+      summary: List all question banks
+      operationId: listQuestionBanks
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QuestionBankInfo'
+
+  /api/v1/questions/generate:
+    post:
+      tags: [questions]
+      summary: Generate a single answer
+      operationId: generateAnswer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationResult'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/questions/batch:
+    post:
+      tags: [questions]
+      summary: Generate answers for a batch of questions
+      operationId: generateBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGenerateRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GenerationResult'
+
+  /api/v1/questions/{qid}/revise:
+    post:
+      tags: [questions]
+      summary: Revise an existing answer
+      operationId: reviseAnswer
+      parameters:
+        - name: qid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviseRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationResult'
+
+  /api/v1/questions/stale:
+    get:
+      tags: [questions]
+      summary: List (or re-answer) stale cached answers
+      operationId: listStaleAnswers
+      parameters:
+        - name: module_name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: dry_run
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaleResponse'
+
+  /api/v1/pipeline/inspect:
+    get:
+      tags: [pipeline]
+      summary: Inspect all 6 pipeline stages for a question
+      operationId: inspectPipeline
+      parameters:
+        - name: qid
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: question_text
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: subject
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [psm, fmt]
+        - name: marks
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            enum: [5, 10, 15]
+        - name: question_type
+          in: query
+          required: false
+          schema:
+            type: string
+            default: theory
+            enum: [theory, mcq]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineTrace'
+
+  /api/v1/validation/validate:
+    post:
+      tags: [validation]
+      summary: Run the validation pipeline against an answer
+      operationId: validateAnswer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationReport'
+
+  /api/v1/benchmarks/runs:
+    get:
+      tags: [benchmarks]
+      summary: List all benchmark runs
+      operationId: listBenchmarkRuns
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BenchmarkSummary'
+
+  /api/v1/benchmarks/runs/{run_id}:
+    get:
+      tags: [benchmarks]
+      summary: Get a full benchmark run report
+      operationId: getBenchmarkRun
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/RunNotFound'
+
+  /api/v1/benchmarks/compare:
+    get:
+      tags: [benchmarks]
+      summary: Compare two benchmark runs
+      operationId: compareBenchmarkRuns
+      parameters:
+        - name: run_a
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: run_b
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BenchmarkCompareResponse'
+
+  /api/v1/cache/entries:
+    get:
+      tags: [cache]
+      summary: List cache entries
+      operationId: listCacheEntries
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [psm, fmt]
+        - name: stale_only
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CacheEntry'
+
+  /api/v1/cache/entries/{qid}:
+    get:
+      tags: [cache]
+      summary: Get a single cache entry by qid
+      operationId: getCacheEntry
+      parameters:
+        - name: qid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/CacheEntryNotFound'
+
+  /api/v1/cache/status:
+    get:
+      tags: [cache]
+      summary: Get overall cache status
+      operationId: getCacheStatus
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheStatus'
+
+  /api/v1/cache/reanswer:
+    post:
+      tags: [cache]
+      summary: Mark a cache entry as stale
+      operationId: reanswerCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReanswerRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanswerResponse'
+
+  /api/v1/logs/{name}:
+    get:
+      tags: [logs]
+      summary: Tail a log file
+      operationId: tailLog
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ingestion, generation, validation, benchmark]
+        - name: n
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '400':
+          $ref: '#/components/responses/UnknownLog'
+
+  /api/v1/logs/{name}/search:
+    get:
+      tags: [logs]
+      summary: Search a log file
+      operationId: searchLog
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ingestion, generation, validation, benchmark]
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: n
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '400':
+          $ref: '#/components/responses/UnknownLog'
+
+components:
+  responses:
+    RunNotFound:
+      description: Benchmark run not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: RUN_NOT_FOUND
+            detail: "benchmark run not found: my-run-id"
+    CacheEntryNotFound:
+      description: Cache entry not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: CACHE_ENTRY_NOT_FOUND
+            detail: "cache entry not found: my-qid"
+    UnknownLog:
+      description: Unknown log name
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: UNKNOWN_LOG
+            detail: "unknown log: badname. Valid: ingestion, generation, validation, benchmark"
+    ValidationError:
+      description: Validation error (FastAPI default)
+      content:
+        application/json:
+          schema:
+            type: object
+
+  schemas:
+    RootResponse:
+      type: object
+      required: [name, version, docs, api]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        docs:
+          type: string
+        api:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error_code, detail]
+      properties:
+        error_code:
+          type: string
+          description: Stable, machine-readable identifier
+        detail:
+          type: string
+          description: Human-readable message
+
+    VersionInfo:
+      type: object
+      required: [schema_version, package_version, pipeline_versions, benchmark_baseline_tag]
+      properties:
+        schema_version:
+          type: integer
+        package_version:
+          type: string
+        pipeline_versions:
+          type: object
+          additionalProperties:
+            type: integer
+        benchmark_baseline_tag:
+          type: string
+          nullable: true
+
+    BookInfo:
+      type: object
+      required: [schema_version, book_id, title, subject, path, indexed]
+      properties:
+        schema_version:
+          type: integer
+        book_id:
+          type: string
+        title:
+          type: string
+        subject:
+          type: string
+          enum: [psm, fmt, unknown]
+        path:
+          type: string
+        indexed:
+          type: boolean
+        indexed_at:
+          type: string
+          nullable: true
+        chunk_count:
+          type: integer
+
+    AddBookResponse:
+      type: object
+      required: [ok, book_id, path, subject]
+      properties:
+        ok:
+          type: boolean
+        book_id:
+          type: string
+        path:
+          type: string
+        subject:
+          type: string
+
+    RemoveBookResponse:
+      type: object
+      required: [ok, book_id, moved_to]
+      properties:
+        ok:
+          type: boolean
+        book_id:
+          type: string
+        moved_to:
+          type: string
+
+    QuestionBankInfo:
+      type: object
+      required: [schema_version, name, version, subject, path, question_count]
+      properties:
+        schema_version:
+          type: integer
+        name:
+          type: string
+        version:
+          type: string
+        subject:
+          type: string
+        path:
+          type: string
+        question_count:
+          type: integer
+
+    IngestionStatus:
+      type: object
+      required: [schema_version, book_id, status, started_at]
+      properties:
+        schema_version:
+          type: integer
+        book_id:
+          type: string
+        status:
+          type: string
+          enum: [unknown, pending, running, succeeded, failed]
+        started_at:
+          type: string
+        finished_at:
+          type: string
+          nullable: true
+        chunk_count:
+          type: integer
+        error:
+          type: string
+          nullable: true
+
+    GenerateRequest:
+      type: object
+      required: [qid, question_text, subject, marks]
+      properties:
+        qid:
+          type: string
+        question_text:
+          type: string
+        subject:
+          type: string
+          enum: [psm, fmt]
+        marks:
+          type: integer
+          default: 10
+          enum: [5, 10, 15]
+        question_type:
+          type: string
+          default: theory
+          enum: [theory, mcq]
+        book_id:
+          type: string
+        chapter:
+          type: string
+
+    BatchGenerateRequest:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerateRequest'
+
+    ReviseRequest:
+      type: object
+      required: [subject, revised_question_text]
+      properties:
+        subject:
+          type: string
+          enum: [psm, fmt]
+        revised_question_text:
+          type: string
+
+    GenerationResult:
+      type: object
+      required: [schema_version, qid, ok, cache_hit, token_count, latency_seconds]
+      properties:
+        schema_version:
+          type: integer
+        qid:
+          type: string
+        ok:
+          type: boolean
+        answer_text:
+          type: string
+          nullable: true
+        pdf_path:
+          type: string
+          nullable: true
+        cache_hit:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        token_count:
+          type: integer
+        latency_seconds:
+          type: number
+
+    StaleResponse:
+      type: object
+      required: [ok, dry_run]
+      properties:
+        ok:
+          type: boolean
+        dry_run:
+          type: boolean
+        stale_count:
+          type: integer
+        stale_qids:
+          type: array
+          items:
+            type: string
+        reanswered_count:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationResult'
+
+    PipelineTrace:
+      type: object
+      required: [schema_version, qid, stages, total_latency_seconds]
+      properties:
+        schema_version:
+          type: integer
+        qid:
+          type: string
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageOutput'
+        total_latency_seconds:
+          type: number
+
+    PipelineStageOutput:
+      type: object
+      required: [schema_version, stage, output, latency_seconds]
+      properties:
+        schema_version:
+          type: integer
+        stage:
+          type: string
+          enum: [planner, blueprint, retrieval, reranker, writer, validator]
+        output:
+          type: object
+        latency_seconds:
+          type: number
+
+    ValidateRequest:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+        blueprint:
+          type: object
+          nullable: true
+        disabled_rules:
+          type: array
+          items:
+            type: string
+
+    ValidationReport:
+      type: object
+      required: [schema_version, pass, score, results, failed_rules, warnings, informational_messages]
+      properties:
+        schema_version:
+          type: integer
+        pass:
+          type: boolean
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationResult'
+        failed_rules:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        informational_messages:
+          type: array
+          items:
+            type: string
+
+    ValidationResult:
+      type: object
+      required: [rule_name, severity, message]
+      properties:
+        rule_name:
+          type: string
+        severity:
+          type: string
+          enum: [pass, warn, fail]
+        message:
+          type: string
+        details:
+          type: object
+          nullable: true
+
+    BenchmarkSummary:
+      type: object
+      required: [schema_version, run_id, timestamp, llm_mode, n_questions, n_success, n_failure, cache_hit_rate, total_tokens, avg_total_latency_seconds, avg_pdf_generation_seconds, json_report_path]
+      properties:
+        schema_version:
+          type: integer
+        run_id:
+          type: string
+        timestamp:
+          type: string
+        llm_mode:
+          type: string
+          enum: [mock, real]
+        n_questions:
+          type: integer
+        n_success:
+          type: integer
+        n_failure:
+          type: integer
+        cache_hit_rate:
+          type: number
+        total_tokens:
+          type: integer
+        avg_total_latency_seconds:
+          type: number
+        avg_pdf_generation_seconds:
+          type: number
+        json_report_path:
+          type: string
+        markdown_report_path:
+          type: string
+          nullable: true
+
+    BenchmarkCompareResponse:
+      type: object
+      required: [ok, run_a, run_b, delta]
+      properties:
+        ok:
+          type: boolean
+        run_a:
+          type: string
+        run_b:
+          type: string
+        delta:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+
+    CacheEntry:
+      type: object
+      required: [schema_version, qid, subject, is_stale, stale_reasons, versions, target_word_count]
+      properties:
+        schema_version:
+          type: integer
+        qid:
+          type: string
+        subject:
+          type: string
+        enum: [psm, fmt]
+        is_stale:
+          type: boolean
+        stale_reasons:
+          type: array
+          items:
+            type: string
+        versions:
+          type: object
+          properties:
+            schema:
+              type: integer
+            prompt:
+              type: integer
+            retrieval:
+              type: integer
+            planner:
+              type: integer
+            validator:
+              type: integer
+            reranker:
+              type: integer
+            renderer:
+              type: integer
+            embedding_model:
+              type: string
+        target_word_count:
+          type: integer
+        cached_at:
+          type: string
+          nullable: true
+        last_validated_at:
+          type: string
+          nullable: true
+        validation_score:
+          type: number
+          nullable: true
+
+    CacheStatus:
+      type: object
+      required: [total_entries, by_subject, stale_by_subject, schema_version]
+      properties:
+        total_entries:
+          type: integer
+        by_subject:
+          type: object
+          additionalProperties:
+            type: integer
+        stale_by_subject:
+          type: object
+          additionalProperties:
+            type: integer
+        schema_version:
+          type: integer
+
+    ReanswerRequest:
+      type: object
+      required: [qid]
+      properties:
+        qid:
+          type: string
+
+    ReanswerResponse:
+      type: object
+      required: [ok, qid]
+      properties:
+        ok:
+          type: boolean
+        qid:
+          type: string
+        marked_stale:
+          type: boolean
+        error:
+          type: string

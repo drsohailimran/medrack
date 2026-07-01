@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# MedRack — native installer for Ubuntu/Debian.
+# Installs system deps, the Python backend (venv), and builds the frontend.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$HERE"
+
+echo "============================================"
+echo "  MedRack installer"
+echo "============================================"
+
+# --- 1. System packages -----------------------------------------------------
+#   tesseract-ocr  : OCR for scanned/image PDFs
+#   poppler-utils  : PDF rendering (pdftoppm, pdfinfo)
+#   graphviz       : renders flowchart diagrams (the `dot` tool)
+if command -v apt-get >/dev/null 2>&1; then
+  echo "==> Installing system packages (needs sudo)"
+  sudo apt-get update -y
+  sudo apt-get install -y python3 python3-venv python3-pip \
+       tesseract-ocr poppler-utils graphviz
+else
+  echo "WARN: apt-get not found. Ensure these are installed:"
+  echo "      python3 python3-venv tesseract-ocr poppler-utils graphviz"
+fi
+
+# --- 2. Toolchain checks ----------------------------------------------------
+PYTHON="${PYTHON:-python3}"
+command -v "$PYTHON" >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
+command -v node     >/dev/null || { echo "ERROR: node not found — install Node 20+ from https://nodejs.org"; exit 1; }
+command -v npm      >/dev/null || { echo "ERROR: npm not found — install Node 20+ (bundles npm)"; exit 1; }
+echo "==> Using $($PYTHON --version), node $(node --version), npm $(npm --version)"
+
+# --- 3. .env ----------------------------------------------------------------
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "==> Created .env from .env.example — edit it to set your LLM provider."
+fi
+set -a; . ./.env; set +a
+: "${MEDRACK_HOME:=$HOME/medrack-data}"
+: "${MEDRACK_API_BASE:=http://localhost:8010/api/v1}"
+
+# --- 4. Backend: venv + install ---------------------------------------------
+echo "==> Creating Python venv (.venv) and installing the backend"
+echo "    (this downloads PyTorch/ChromaDB — a few minutes, ~2 GB, one time)"
+"$PYTHON" -m venv .venv
+./.venv/bin/pip install --upgrade pip wheel
+./.venv/bin/pip install ./backend
+
+# --- 5. Initialise data directories -----------------------------------------
+echo "==> Initialising MedRack data dirs at: $MEDRACK_HOME"
+MEDRACK_HOME="$MEDRACK_HOME" ./.venv/bin/medrack init || true
+
+# --- 6. Frontend: install + build (Node server) -----------------------------
+echo "==> Building the frontend (API base baked in: $MEDRACK_API_BASE)"
+( cd frontend
+  npm ci 2>/dev/null || npm install
+  NITRO_PRESET=node-server VITE_MEDRACK_API_BASE="$MEDRACK_API_BASE" npm run build
+)
+
+echo
+echo "============================================"
+echo "  Install complete."
+echo "  1. Edit .env — choose Gemini (paste GEMINI_API_KEY) or a local"
+echo "     llama.cpp model (set MEDRACK_LLM_BASE_URL). See docs/CONFIGURATION.md."
+echo "  2. Start:   ./run.sh"
+echo "  3. Stop:    ./stop.sh"
+echo "============================================"

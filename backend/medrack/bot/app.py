@@ -1,0 +1,419 @@
+"""MedRack Telegram bot application.
+
+Stage 2.7: T1 skeleton (build_application + 11 stub handlers + main).
+T2/T3/T4 fill in the handler bodies.
+
+NOTE: do NOT add `from __future__ import annotations` here. The brief's
+`test_main_function_returns_int` (test_bot_layout.py) asserts that
+`inspect.signature(main).return_annotation == int` is the actual `int`
+type, not the string `'int'`. The `__future__` import would break that.
+Python 3.11 supports `str | None` natively, so we don't need it.
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Imports for the T2 informational handlers. T3 and T4 will also need
+# these (T3 patches ``cli.cmd_*`` and uses ``config.get_medrack_home``).
+import medrack.config as config
+import medrack.orchestrate as orchestrate
+from medrack.state import load_preview_state
+from medrack.ingest.manifest import list_books
+from medrack.module.storage import list_modules, load_extracted
+from telegram.ext import Application, CommandHandler
+
+
+def build_application(token: str | None = None) -> Application:
+    """Build the MedRack Telegram bot application.
+
+    Registers all command handlers. Returns the Application, ready to .run_polling().
+    """
+    app = Application.builder().token(token or "TEST_TOKEN").build()
+
+    # Informational
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("status", cmd_status))
+
+    # Workflow
+    app.add_handler(CommandHandler("preview", cmd_preview))
+    app.add_handler(CommandHandler("approve", cmd_approve))
+    app.add_handler(CommandHandler("revise", cmd_revise))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
+
+    # Operator-only
+    app.add_handler(CommandHandler("ingest_module", cmd_ingest_module))
+    app.add_handler(CommandHandler("ingest_book", cmd_ingest_book))
+    app.add_handler(CommandHandler("set_llm_mode", cmd_set_llm_mode))
+
+    # Document handler (operator-only) — downloads any document sent to
+    # the bot to ~/.hermes/medrack/inbox/<ts>_<name>. Used for collecting
+    # sample PDFs (e.g. answer-style calibration docs) without needing
+    # shell access.
+    from telegram.ext import MessageHandler, filters
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
+    return app
+
+
+# ---------------------------------------------------------------------------
+# T2: Informational handlers
+# ---------------------------------------------------------------------------
+WELCOME_TEXT = """\
+Welcome to MedRack! 📚
+
+I'm your MBBS theory-exam answer generator. I can:
+• /list — show all ingested modules
+• /preview <module> [chapter] — generate a preview answer
+• /approve — approve the last preview, generate the full batch
+• /status — show system state
+• /help — show all commands
+
+Get started by typing /list to see what modules are available, then /preview <name>.
+"""
+
+
+HELP_TEXT = """\
+*MedRack commands*
+
+*Informational:*
+/start — welcome message
+/help — this help
+/list — list ingested modules
+/status — show system state
+
+*Workflow:*
+/preview <module> [chapter] — run preview (default chapter: all)
+/approve — approve the last preview, generate full batch
+/revise <axis> <notes> — record a revision for the last preview
+/cancel — cancel the current preview
+
+*Operator-only:*
+/ingest_module <subject> <name> — start module ingest (then send PDF)
+/ingest_book <subject> <title> — start KB ingest (then send PDF)
+/set_llm_mode <mock|real> — switch LLM mode
+"""
+
+
+async def cmd_start(update, context):
+    import logging
+    logging.getLogger("medrack.bot").info(
+        "cmd_start from chat_id=%s user=%s",
+        update.effective_chat.id if update.effective_chat else "?",
+        update.effective_user.username if update.effective_user else "?",
+    )
+    await update.message.reply_text(WELCOME_TEXT)
+
+
+async def cmd_help(update, context):
+    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+
+
+async def cmd_list(update, context):
+    rows = []
+    for mod in list_modules():
+        # list_modules() can return either list[dict] (production) or
+        # list[tuple] (per the brief's test fixture). Normalize both.
+        if isinstance(mod, tuple):
+            subject, name = mod[0], mod[1]
+            ext_path = None
+        else:
+            subject = mod.get("subject", "?")
+            name = mod.get("name", "?")
+            p = mod.get("path")
+            if p is None:
+                ext_path = None
+            else:
+                ext_path = Path(p) / "extracted.json"
+        if ext_path and ext_path.is_file():
+            data = json.loads(ext_path.read_text())
+            meta = data.get("metadata", {})
+            count = meta.get("questions_extracted", "?")
+            fmt = meta.get("format", "?")
+            rows.append(f"• `{name}` [{subject}] — {count} questions ({fmt})")
+    text = "*Ingested modules:*\n\n" + ("\n".join(rows) if rows else "_(none yet)_")
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def cmd_status(update, context):
+    books = list_books()
+    modules = list_modules()
+    n_books = len(books) if isinstance(books, list) else len(list(books))
+    n_modules = len(modules)
+    state = load_preview_state()
+    state_line = f"  preview: {state.get('module', '?')}" if state else "  preview: (none)"
+    text = (
+        f"*MedRack system state:*\n\n"
+        f"  KB books: {n_books}\n"
+        f"  Modules:  {n_modules}\n"
+        f"{state_line}\n"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+# ---------------------------------------------------------------------------
+# Stubs — replaced in T3, T4
+# ---------------------------------------------------------------------------
+async def cmd_preview(update, context):
+    """Handle /preview <module> [chapter]."""
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Usage: /preview <module> [chapter]")
+        return
+    module_name = args[0]
+    chapter = args[1] if len(args) > 1 else "all"
+    try:
+        ns = argparse.Namespace(
+            module=module_name, chapter=chapter, subject=None, reanswer=False,
+        )
+        rc = orchestrate.cmd_preview(ns)
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    state = load_preview_state()
+    # state is wrapped in {"last_preview": {...}}. For backwards compat
+    # with test fixtures, also accept a flat shape where "pdf_path" is
+    # at the top level.
+    inner = state.get("last_preview", {}) if state else {}
+    pdf_path_str = inner.get("pdf_path") or (state or {}).get("pdf_path")
+    if rc == 0 and pdf_path_str:
+        from pathlib import Path
+        pdf = Path(pdf_path_str)
+        if pdf.is_file():
+            await update.message.reply_document(
+                document=pdf.open("rb"),
+                filename=pdf.name,
+                caption=f"Preview for {module_name} (chapter: {chapter})",
+            )
+            return
+    await update.message.reply_text(f"rc={rc}")
+
+
+async def cmd_approve(update, context):
+    """Handle /approve — run the full batch."""
+    try:
+        rc = orchestrate.cmd_approve(argparse.Namespace())
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    if rc == 0:
+        from pathlib import Path
+        state_path = config.get_medrack_home() / "state" / "batch_state.json"
+        if state_path.is_file():
+            state = json.loads(state_path.read_text())
+            output_pdf = Path(state.get("output_pdf", ""))
+            if output_pdf.is_file():
+                await update.message.reply_document(
+                    document=output_pdf.open("rb"),
+                    filename=output_pdf.name,
+                    caption=f"Full batch for {state.get('module', '?')}",
+                )
+                return
+    await update.message.reply_text(f"approved, rc={rc}")
+
+
+async def cmd_revise(update, context):
+    """Handle /revise <axis> <notes...>."""
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /revise <wordcount|format|quality> <notes>")
+        return
+    axis = args[0]
+    notes = " ".join(args[1:])
+    try:
+        rc = orchestrate.cmd_revise(argparse.Namespace(axis=axis, notes=notes))
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    await update.message.reply_text(f"Revision recorded: {axis} = {notes}. rc={rc}")
+
+
+async def cmd_cancel(update, context):
+    """Handle /cancel — clear the preview state."""
+    try:
+        rc = orchestrate.cmd_cancel(argparse.Namespace())
+    except Exception as exc:
+        await update.message.reply_text(f"ERROR: {exc}")
+        return
+    await update.message.reply_text(f"Preview cancelled. rc={rc}")
+
+
+# ---------------------------------------------------------------------------
+# T4: Operator-only handlers + auth helpers
+# ---------------------------------------------------------------------------
+def is_authorized(chat_id: int) -> bool:
+    """Check if a chat_id is authorized for operator commands.
+
+    If MEDRACK_OPERATOR_CHAT_ID is unset, all chats are authorized
+    (dev mode). Otherwise, only the matching chat_id is authorized.
+    """
+    operator_id = os.environ.get("MEDRACK_OPERATOR_CHAT_ID")
+    if not operator_id:
+        return True  # dev mode: all chats are authorized
+    return str(chat_id) == str(operator_id)
+
+
+async def _require_operator(update, context):
+    """If not authorized, send a message and return True (caller should bail).
+
+    Returns False when the user IS authorized (proceed normally).
+    """
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    if not is_authorized(chat_id):
+        await update.message.reply_text("ERROR: not authorized (operator-only command)")
+        return True
+    return False
+
+
+async def cmd_ingest_module(update, context):
+    """Handle /ingest_module <subject> <name> — then user sends PDF as next message."""
+    if await _require_operator(update, context):
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /ingest_module <subject> <name>")
+        return
+    subject, name = args[0], args[1]
+    # Stash the (subject, name) in context.user_data for the next file upload handler
+    context.user_data["pending_ingest"] = {"kind": "module", "subject": subject, "name": name}
+    await update.message.reply_text(
+        f"OK — now send the module PDF for {name} [{subject}]. "
+        f"Reply /cancel to abort."
+    )
+
+
+async def cmd_ingest_book(update, context):
+    """Handle /ingest_book <subject> <title>."""
+    if await _require_operator(update, context):
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /ingest_book <subject> <title>")
+        return
+    subject, title = args[0], " ".join(args[1:])
+    context.user_data["pending_ingest"] = {"kind": "book", "subject": subject, "title": title}
+    await update.message.reply_text(
+        f"OK — now send the book PDF for {title} [{subject}]. "
+        f"Reply /cancel to abort."
+    )
+
+
+async def cmd_set_llm_mode(update, context):
+    """Handle /set_llm_mode <mock|real>."""
+    if await _require_operator(update, context):
+        return
+    args = context.args or []
+    if not args or args[0] not in ("mock", "real"):
+        await update.message.reply_text("Usage: /set_llm_mode <mock|real>")
+        return
+    # The bot runs as a service and has its own env; we use a sidecar file
+    # that cmd_* functions read on each call.
+    config_path = config.get_medrack_home() / "state" / "llm_mode"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(args[0])
+    await update.message.reply_text(f"LLM mode set to: {args[0]}")
+
+
+async def handle_document(update, context):
+    """Download any document sent to the bot to ~/.hermes/medrack/inbox/.
+
+    This is a temporary handler so the operator can send sample PDFs
+    (e.g. for answer-style calibration) without going through the
+    shell. The handler is operator-only.
+    """
+    import logging
+    log = logging.getLogger("medrack.bot")
+    log.info("handle_document fired: file_name=%s file_size=%s chat_id=%s",
+             update.message.document.file_name if update.message.document else "?",
+             update.message.document.file_size if update.message.document else "?",
+             update.effective_chat.id if update.effective_chat else "?")
+
+    # Operator-only.
+    if await _require_operator(update, context):
+        return
+    doc = update.message.document
+    file_id = doc.file_id
+    file_name = doc.file_name or "document"
+    file_size = doc.file_size or 0
+    # Get the file path from Telegram.
+    tg_file = await context.bot.get_file(file_id)
+    file_path = tg_file.file_path
+    log.info("handle_document: tg_file.file_path=%s", file_path)
+    inbox_dir = config.get_medrack_home() / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    # Prefix with timestamp to avoid clobbering same-name files.
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = inbox_dir / f"{ts}_{file_name}"
+    # Download the file. file_path from getFile may be either a relative
+    # path ("documents/file_3.pdf") OR a full URL (telegram API sometimes
+    # returns the full URL). Detect and handle both.
+    import httpx as _httpx
+    token = os.environ["MEDRACK_TELEGRAM_BOT_TOKEN"]
+    log.info("handle_document: token len=%d prefix=%s", len(token), token[:10])
+    if file_path.startswith("http"):
+        # Full URL — use as-is.
+        candidate_urls = [file_path]
+    else:
+        # Relative path — prepend the standard Telegram file URL prefix.
+        candidate_urls = [
+            f"https://api.telegram.org/file/bot{token}/{file_path}",
+            f"https://api.telegram.org/file/bot{token}/{file_id}/{file_path}",
+        ]
+    last_error = None
+    for url in candidate_urls:
+        log.info("handle_document: trying url=%s", url[:80])
+        try:
+            r = _httpx.get(url, timeout=60, follow_redirects=True)
+            log.info("handle_document: url=%s status=%d size=%d",
+                     url[:60], r.status_code, len(r.content))
+            if r.status_code == 200 and len(r.content) > 100 and not r.content.startswith(b"{"):
+                target.write_bytes(r.content)
+                await update.message.reply_text(
+                    f"Saved: {target}  ({len(r.content)} bytes)"
+                )
+                return
+            last_error = f"status={r.status_code} size={len(r.content)} preview={r.content[:80]!r}"
+        except Exception as exc:
+            last_error = f"exception: {exc}"
+    # All attempts failed
+    log.error("handle_document: all attempts failed. last_error=%s", last_error)
+    await update.message.reply_text(
+        f"ERROR: failed to download document after {len(candidate_urls)} attempts. "
+        f"Last error: {last_error}"
+    )
+
+
+def main() -> int:
+    """CLI entry point: `medrack bot`.
+
+    Reads from $MEDRACK_TELEGRAM_BOT_TOKEN (NOT the Hermes gateway's
+    $TELEGRAM_BOT_TOKEN, which is reserved for the Hermes agent bot).
+    This lets MedRack run as a separate Telegram bot on the same host.
+    """
+    token = os.environ.get("MEDRACK_TELEGRAM_BOT_TOKEN")
+    if not token:
+        print("ERROR: $MEDRACK_TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
+        return 2
+    # Configure logging so we can see what the bot is doing in the journal.
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+    )
+    # Quiet down python-telegram-bot's chatter (it logs every API call at DEBUG).
+    # We DO want INFO/ERROR from the application itself to see handler firings.
+    logging.getLogger("telegram.ext._updater").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Ensure our app-level logger emits at INFO (basicConfig sets root, but
+    # the medrack.bot logger might inherit a stricter level).
+    logging.getLogger("medrack.bot").setLevel(logging.INFO)
+    app = build_application(token)
+    app.run_polling()
+    return 0

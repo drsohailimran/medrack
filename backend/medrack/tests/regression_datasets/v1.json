@@ -1,0 +1,211 @@
+{
+  "_doc": "Permanent regression dataset v1 for MedRack (Phase 4, directive v1.0). 20 representative MBBS questions spanning PSM and FMT, long and short, easy/moderate/difficult. NEVER MODIFY — this dataset is the permanent benchmark suite. To extend, add a v2.json with additional questions. The benchmark framework (Phase 5) loads this file to measure before/after metrics for every architectural change. To add a question: copy an existing entry shape, fill in the fields, save. The (module, qid) tuple is the unique key — modules use independent qid sequences (q001, q002, ...), so module + qid is the disambiguator.",
+  "_version": 1,
+  "_created": "2026-06-29",
+  "_module_sources": {
+    "psm-module-1": "modules/psm/psm-module-1/extracted.json",
+    "singhi-fmt": "modules/fmt/singhi-fmt/extracted.json"
+  },
+  "questions": [
+    {
+      "module": "psm-module-1",
+      "qid": "q022",
+      "subject": "psm",
+      "marks": 10,
+      "section": "A",
+      "difficulty": "easy",
+      "topic": "health-indicators",
+      "notes": "Short factual question; tests the LLM's ability to answer concisely with the right Indian data point (IMR)."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q051",
+      "subject": "psm",
+      "marks": 10,
+      "section": "A",
+      "difficulty": "moderate",
+      "topic": "epidemiology-surveillance",
+      "notes": "Tests the LLM's ability to define surveillance with Indian context (IDSP)."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q053",
+      "subject": "psm",
+      "marks": 10,
+      "section": "C",
+      "difficulty": "moderate",
+      "topic": "health-promotion",
+      "notes": "Justify + examples; tests the LLM's ability to provide structured 10-mark answer with examples."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q054",
+      "subject": "psm",
+      "marks": 10,
+      "section": "C",
+      "difficulty": "moderate",
+      "topic": "health-indicators",
+      "notes": "PQLI; tests the LLM's ability to handle composite health indices."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q055",
+      "subject": "psm",
+      "marks": 10,
+      "section": "C",
+      "difficulty": "difficult",
+      "topic": "epidemiology-causation",
+      "notes": "Multifactorial causation with examples; tests depth of epidemiological reasoning."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q056",
+      "subject": "psm",
+      "marks": 10,
+      "section": "C",
+      "difficulty": "moderate",
+      "topic": "natural-history-disease",
+      "notes": "Natural history of disease (Park's framework); tests the LLM's command of the core PSM framework."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q061",
+      "subject": "psm",
+      "marks": 10,
+      "section": "C",
+      "difficulty": "difficult",
+      "topic": "natural-history-disease",
+      "notes": "Natural history + levels of prevention + modes of intervention; long 10-mark answer."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q062",
+      "subject": "psm",
+      "marks": 5,
+      "section": "D",
+      "difficulty": "moderate",
+      "topic": "epidemiology-causality",
+      "notes": "Criteria for causality (Henle-Koch, Evans, Rothman); tests the LLM's ability to enumerate criteria concisely."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q063",
+      "subject": "psm",
+      "marks": 5,
+      "section": "D",
+      "difficulty": "easy",
+      "topic": "communicable-disease",
+      "notes": "Disease control vs eradication; tests the LLM's ability to distinguish definitions."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q127",
+      "subject": "psm",
+      "marks": 5,
+      "section": "C",
+      "difficulty": "easy",
+      "topic": "nutrition",
+      "notes": "Vitamin A sources + deficiency signs; tests the LLM's ability to provide a structured 5-mark answer with clinical data."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q173",
+      "subject": "psm",
+      "marks": 5,
+      "section": "A",
+      "difficulty": "moderate",
+      "topic": "occupational-health",
+      "notes": "Lathyrism; tests the LLM's ability to cover a less common but exam-relevant topic."
+    },
+    {
+      "module": "psm-module-1",
+      "qid": "q186",
+      "subject": "psm",
+      "marks": 5,
+      "section": "A",
+      "difficulty": "easy",
+      "topic": "nutrition-programmes",
+      "notes": "Mid-day meal scheme; tests the LLM's command of Indian national programmes."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q014",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "moderate",
+      "topic": "medical-jurisprudence-perjury",
+      "notes": "Perjury; tests the LLM's command of IPC sections + court procedure."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q067",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "moderate",
+      "topic": "forensic-identity",
+      "notes": "Methods to mutilate fingerprints; tests the LLM's ability to cover forensic identification."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q087",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "difficult",
+      "topic": "forensic-pathology-negative-autopsy",
+      "notes": "Negative autopsy; tests the LLM's ability to handle edge-case forensic pathology."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q096",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "moderate",
+      "topic": "forensic-pathology-obscure-autopsy",
+      "notes": "Obscure autopsy; tests the LLM's command of autopsy classification."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q152",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "difficult",
+      "topic": "forensic-ballistics",
+      "notes": "Entry wound characteristics of rifled firearms at varying ranges; tests depth of forensic ballistics."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q173",
+      "subject": "fmt",
+      "marks": 5,
+      "section": "I",
+      "difficulty": "easy",
+      "topic": "forensic-pathology-wounds",
+      "notes": "Incised vs lacerated wounds; tests the LLM's ability to distinguish wound types concisely."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q433",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "moderate",
+      "topic": "forensic-identity-dna",
+      "notes": "DNA fingerprinting; tests the LLM's command of modern forensic techniques."
+    },
+    {
+      "module": "singhi-fmt",
+      "qid": "q529",
+      "subject": "fmt",
+      "marks": 10,
+      "section": "I",
+      "difficulty": "difficult",
+      "topic": "forensic-toxicology-acids",
+      "notes": "PM appearance after inorganic acid ingestion; tests forensic toxicology reasoning."
+    }
+  ]
+}

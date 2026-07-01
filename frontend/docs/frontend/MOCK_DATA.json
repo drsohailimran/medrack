@@ -1,0 +1,454 @@
+{
+  "version": "0.3.0-backend-freeze",
+  "description": "Mock data for the MedRack frontend. Use these to prototype the UI without the backend. The shapes match the actual API responses (see docs/frontend/DATA_MODELS.md).",
+  "version_info": {
+    "schema_version": 1,
+    "package_version": "0.3.0-backend-freeze",
+    "pipeline_versions": {
+      "schema": 2,
+      "prompt": 1,
+      "retrieval": 1,
+      "planner": 0,
+      "validator": 0,
+      "reranker": 0,
+      "renderer": 1
+    },
+    "benchmark_baseline_tag": "phase-5-baseline"
+  },
+  "books": [
+    {
+      "schema_version": 1,
+      "book_id": "park_psm_v4",
+      "title": "Park PSM V4",
+      "subject": "psm",
+      "path": "/home/user/.medrack/inbox/park_psm_v4.pdf",
+      "indexed": true,
+      "indexed_at": "2025-01-15T10:30:00",
+      "chunk_count": 1234
+    },
+    {
+      "schema_version": 1,
+      "book_id": "park_fmt_v3",
+      "title": "Park FMT V3",
+      "subject": "fmt",
+      "path": "/home/user/.medrack/inbox/park_fmt_v3.pdf",
+      "indexed": true,
+      "indexed_at": "2025-01-20T14:15:00",
+      "chunk_count": 876
+    },
+    {
+      "schema_version": 1,
+      "book_id": "kpark_clinical",
+      "title": "K Park Clinical PSM",
+      "subject": "psm",
+      "path": "/home/user/.medrack/inbox/kpark_clinical.pdf",
+      "indexed": false,
+      "indexed_at": null,
+      "chunk_count": 0
+    }
+  ],
+  "question_banks": [
+    {
+      "schema_version": 1,
+      "name": "v1",
+      "version": "v1",
+      "subject": "psm",
+      "path": "/home/user/.medrack/tests/regression_datasets/v1.json",
+      "question_count": 20
+    }
+  ],
+  "ingestion_statuses": {
+    "park_psm_v4": {
+      "schema_version": 1,
+      "book_id": "park_psm_v4",
+      "status": "succeeded",
+      "started_at": "2025-01-15T10:25:00",
+      "finished_at": "2025-01-15T10:30:00",
+      "chunk_count": 1234,
+      "error": null
+    },
+    "kpark_clinical": {
+      "schema_version": 1,
+      "book_id": "kpark_clinical",
+      "status": "running",
+      "started_at": "2025-01-22T09:00:00",
+      "finished_at": null,
+      "chunk_count": 0,
+      "error": null
+    }
+  },
+  "questions": [
+    {
+      "qid": "q001",
+      "question_text": "Discuss the management of diabetes mellitus.",
+      "subject": "psm",
+      "marks": 10
+    },
+    {
+      "qid": "q002",
+      "question_text": "Describe the epidemiology of tuberculosis in India.",
+      "subject": "psm",
+      "marks": 5
+    },
+    {
+      "qid": "q003",
+      "question_text": "What are the national health programmes for vector-borne diseases?",
+      "subject": "psm",
+      "marks": 10
+    }
+  ],
+  "generation_result_success": {
+    "schema_version": 1,
+    "qid": "q001",
+    "ok": true,
+    "answer_text": "Introduction: Diabetes mellitus is a chronic metabolic disorder characterized by hyperglycemia. It affects millions of people worldwide and is a major public health concern.\n\nDefinition: Diabetes mellitus is defined as a group of metabolic diseases characterized by elevated blood glucose levels resulting from defects in insulin secretion, insulin action, or both.\n\nEpidemiology: The global prevalence of diabetes has been rising steadily. In India, an estimated 77 million adults have diabetes, with projections reaching 134 million by 2045. Type 2 diabetes accounts for 90-95% of all cases.\n\nManagement: Management of diabetes involves lifestyle modification, oral hypoglycemic agents, and insulin therapy. First-line therapy is metformin 500mg twice daily. [chunk_abc123]\n\nConclusion: Diabetes mellitus requires lifelong management with a combination of lifestyle changes and pharmacotherapy to prevent complications.",
+    "pdf_path": "/home/user/.medrack/cache/psm-module-1/diabetes/q001.pdf",
+    "cache_hit": false,
+    "error": null,
+    "token_count": 1234,
+    "latency_seconds": 5.6
+  },
+  "generation_result_cache_hit": {
+    "schema_version": 1,
+    "qid": "q001",
+    "ok": true,
+    "answer_text": "Introduction: Diabetes mellitus is a chronic metabolic disorder characterized by hyperglycemia. It affects millions of people worldwide and is a major public health concern.\n\nDefinition: Diabetes mellitus is defined as a group of metabolic diseases characterized by elevated blood glucose levels resulting from defects in insulin secretion, insulin action, or both.\n\nEpidemiology: The global prevalence of diabetes has been rising steadily. In India, an estimated 77 million adults have diabetes, with projections reaching 134 million by 2045. Type 2 diabetes accounts for 90-95% of all cases.\n\nManagement: Management of diabetes involves lifestyle modification, oral hypoglycemic agents, and insulin therapy. First-line therapy is metformin 500mg twice daily. [chunk_abc123]\n\nConclusion: Diabetes mellitus requires lifelong management with a combination of lifestyle changes and pharmacotherapy to prevent complications.",
+    "pdf_path": "/home/user/.medrack/cache/psm-module-1/diabetes/q001.pdf",
+    "cache_hit": true,
+    "error": null,
+    "token_count": 0,
+    "latency_seconds": 0.05
+  },
+  "generation_result_failure": {
+    "schema_version": 1,
+    "qid": "q001",
+    "ok": false,
+    "answer_text": null,
+    "pdf_path": null,
+    "cache_hit": false,
+    "error": "LLM API timeout after 60s. Please retry.",
+    "token_count": 0,
+    "latency_seconds": 60.0
+  },
+  "pipeline_trace": {
+    "schema_version": 1,
+    "qid": "q001",
+    "stages": [
+      {
+        "schema_version": 1,
+        "stage": "planner",
+        "output": {
+          "subject": "psm",
+          "marks": 10,
+          "question_type": "theory",
+          "target_word_count": 775,
+          "sections": [
+            {"name": "introduction", "target_word_count": 116, "required": true, "category": "framing", "metadata_section": null},
+            {"name": "definition", "target_word_count": 150, "required": true, "category": "medical", "metadata_section": "section_definition"},
+            {"name": "epidemiology", "target_word_count": 150, "required": true, "category": "medical", "metadata_section": "section_epidemiology"},
+            {"name": "management", "target_word_count": 290, "required": true, "category": "medical", "metadata_section": "section_management"},
+            {"name": "conclusion", "target_word_count": 78, "required": true, "category": "framing", "metadata_section": null}
+          ],
+          "required_metadata_categories": ["section_definition", "section_epidemiology", "section_management"]
+        },
+        "latency_seconds": 0.001
+      },
+      {
+        "schema_version": 1,
+        "stage": "blueprint",
+        "output": {
+          "subject": "psm",
+          "marks": 10,
+          "total_target_word_count": 775,
+          "section_specs": [
+            {"section_name": "introduction", "priority": 0, "min_chunks": 1, "max_chunks": 3, "evidence_category": "framing"},
+            {"section_name": "definition", "priority": 0, "min_chunks": 1, "max_chunks": 3, "evidence_category": "medical", "metadata_filter": {"section_definition": true}},
+            {"section_name": "epidemiology", "priority": 0, "min_chunks": 1, "max_chunks": 3, "evidence_category": "medical", "metadata_filter": {"section_epidemiology": true}},
+            {"section_name": "management", "priority": 0, "min_chunks": 1, "max_chunks": 3, "evidence_category": "medical", "metadata_filter": {"section_management": true}},
+            {"section_name": "conclusion", "priority": 0, "min_chunks": 1, "max_chunks": 3, "evidence_category": "framing"}
+          ],
+          "aggregate_metadata_filter": {"$or": [{"section_definition": true}, {"section_epidemiology": true}, {"section_management": true}]},
+          "evidence_categories": ["framing", "medical"]
+        },
+        "latency_seconds": 0.001
+      },
+      {
+        "schema_version": 1,
+        "stage": "retrieval",
+        "output": {
+          "strategy": "AdaptiveStrategy",
+          "top_k_by_marks": {"5": 5, "10": 8}
+        },
+        "latency_seconds": 0.0
+      },
+      {
+        "schema_version": 1,
+        "stage": "reranker",
+        "output": {
+          "metadata_reranker": "MetadataBoostReranker",
+          "semantic_reranker_options": ["IdentityReranker", "HeuristicReranker"],
+          "default_semantic_reranker": "IdentityReranker"
+        },
+        "latency_seconds": 0.0
+      },
+      {
+        "schema_version": 1,
+        "stage": "writer",
+        "output": {
+          "theory_long_target_words": 775,
+          "theory_short_target_words": 475
+        },
+        "latency_seconds": 0.0
+      },
+      {
+        "schema_version": 1,
+        "stage": "validator",
+        "output": {
+          "rule_count": 9,
+          "rule_names": [
+            "FormattingRule",
+            "HeadingStructureRule",
+            "DuplicateSectionRule",
+            "EmptySectionRule",
+            "WordCountRule",
+            "RequiredSectionsRule",
+            "BlueprintComplianceRule",
+            "EvidenceCoverageRule",
+            "ReferenceConsistencyRule"
+          ]
+        },
+        "latency_seconds": 0.0
+      }
+    ],
+    "total_latency_seconds": 0.005
+  },
+  "validation_report_pass": {
+    "schema_version": 1,
+    "pass": true,
+    "score": 0.778,
+    "results": [
+      {"rule_name": "FormattingRule", "severity": "pass", "message": "Formatting OK", "details": null},
+      {"rule_name": "HeadingStructureRule", "severity": "pass", "message": "Found 5 section heading(s)", "details": null},
+      {"rule_name": "DuplicateSectionRule", "severity": "pass", "message": "No duplicate sections", "details": null},
+      {"rule_name": "EmptySectionRule", "severity": "pass", "message": "No empty sections", "details": null},
+      {"rule_name": "WordCountRule", "severity": "pass", "message": "All sections within word-count tolerance", "details": null},
+      {"rule_name": "RequiredSectionsRule", "severity": "pass", "message": "All 5 required section(s) present", "details": null},
+      {"rule_name": "BlueprintComplianceRule", "severity": "pass", "message": "All blueprint sections present", "details": null},
+      {"rule_name": "EvidenceCoverageRule", "severity": "pass", "message": "Found references in 5/5 section(s)", "details": {"sections": []}},
+      {"rule_name": "ReferenceConsistencyRule", "severity": "pass", "message": "All chunk references are unique within sections", "details": null}
+    ],
+    "failed_rules": [],
+    "warnings": [],
+    "informational_messages": [
+      "[FormattingRule] Formatting OK",
+      "[HeadingStructureRule] Found 5 section heading(s)",
+      "[DuplicateSectionRule] No duplicate sections",
+      "[EmptySectionRule] No empty sections",
+      "[WordCountRule] All sections within word-count tolerance",
+      "[RequiredSectionsRule] All 5 required section(s) present",
+      "[BlueprintComplianceRule] All blueprint sections present",
+      "[EvidenceCoverageRule] Found references in 5/5 section(s)",
+      "[ReferenceConsistencyRule] All chunk references are unique within sections"
+    ]
+  },
+  "validation_report_fail": {
+    "schema_version": 1,
+    "pass": false,
+    "score": 0.5,
+    "results": [
+      {"rule_name": "FormattingRule", "severity": "pass", "message": "Formatting OK", "details": null},
+      {"rule_name": "HeadingStructureRule", "severity": "pass", "message": "Found 5 section heading(s)", "details": null},
+      {"rule_name": "DuplicateSectionRule", "severity": "pass", "message": "No duplicate sections", "details": null},
+      {"rule_name": "EmptySectionRule", "severity": "pass", "message": "No empty sections", "details": null},
+      {"rule_name": "WordCountRule", "severity": "fail", "message": "2 section(s) outside ±10% of target word count", "details": {"offending": [{"section": "management", "target": 290, "actual": 145}, {"section": "epidemiology", "target": 150, "actual": 75}]}},
+      {"rule_name": "RequiredSectionsRule", "severity": "pass", "message": "All 5 required section(s) present", "details": null},
+      {"rule_name": "BlueprintComplianceRule", "severity": "pass", "message": "All blueprint sections present", "details": null},
+      {"rule_name": "EvidenceCoverageRule", "severity": "pass", "message": "Found references in 5/5 section(s)", "details": {"sections": []}},
+      {"rule_name": "ReferenceConsistencyRule", "severity": "pass", "message": "All chunk references are unique within sections", "details": null}
+    ],
+    "failed_rules": ["WordCountRule"],
+    "warnings": [],
+    "informational_messages": [
+      "[FormattingRule] Formatting OK",
+      "[HeadingStructureRule] Found 5 section heading(s)",
+      "[RequiredSectionsRule] All 5 required section(s) present"
+    ]
+  },
+  "benchmark_runs": [
+    {
+      "schema_version": 1,
+      "run_id": "20250629T193408Z",
+      "timestamp": "20250629T193408Z",
+      "llm_mode": "mock",
+      "n_questions": 20,
+      "n_success": 40,
+      "n_failure": 0,
+      "cache_hit_rate": 0.5,
+      "total_tokens": 12000,
+      "avg_total_latency_seconds": 0.169,
+      "avg_pdf_generation_seconds": 0.005,
+      "json_report_path": "/home/user/.medrack/benchmarks/runs/20250629T193408Z_run.json",
+      "markdown_report_path": "/home/user/.medrack/benchmarks/runs/20250629T193408Z_report.md"
+    },
+    {
+      "schema_version": 1,
+      "run_id": "20250628T100000Z",
+      "timestamp": "20250628T100000Z",
+      "llm_mode": "mock",
+      "n_questions": 20,
+      "n_success": 40,
+      "n_failure": 0,
+      "cache_hit_rate": 0.5,
+      "total_tokens": 12000,
+      "avg_total_latency_seconds": 0.173,
+      "avg_pdf_generation_seconds": 0.005,
+      "json_report_path": "/home/user/.medrack/benchmarks/runs/20250628T100000Z_run.json",
+      "markdown_report_path": "/home/user/.medrack/benchmarks/runs/20250628T100000Z_report.md"
+    }
+  ],
+  "benchmark_compare": {
+    "ok": true,
+    "run_a": "20250628T100000Z",
+    "run_b": "20250629T193408Z",
+    "delta": {
+      "n_questions": 0,
+      "n_success": 0,
+      "n_failure": 0,
+      "cache_hit_rate": 0.0,
+      "total_tokens": 0,
+      "avg_total_latency_seconds": -0.004
+    }
+  },
+  "cache_entries": [
+    {
+      "schema_version": 1,
+      "qid": "q001",
+      "subject": "psm",
+      "is_stale": false,
+      "stale_reasons": [],
+      "versions": {
+        "schema": 2,
+        "prompt": 1,
+        "retrieval": 1,
+        "planner": 0,
+        "validator": 0,
+        "reranker": 0,
+        "renderer": 1,
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
+      },
+      "target_word_count": 775,
+      "cached_at": "2025-01-15T11:00:00",
+      "last_validated_at": "2025-01-15T11:00:00",
+      "validation_score": 0.778
+    },
+    {
+      "schema_version": 1,
+      "qid": "q002",
+      "subject": "psm",
+      "is_stale": true,
+      "stale_reasons": ["schema_version_mismatch"],
+      "versions": {
+        "schema": 1,
+        "prompt": 1,
+        "retrieval": 1,
+        "planner": 0,
+        "validator": 0,
+        "reranker": 0,
+        "renderer": 1,
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
+      },
+      "target_word_count": 475,
+      "cached_at": "2024-12-01T10:00:00",
+      "last_validated_at": "2024-12-01T10:00:00",
+      "validation_score": 0.667
+    }
+  ],
+  "cache_entry_full": {
+    "qid": "q001",
+    "subject": "psm",
+    "module": "psm-module-1",
+    "chapter": "diabetes",
+    "question_text": "Discuss the management of diabetes mellitus.",
+    "answer_text": "Introduction: Diabetes mellitus is a chronic metabolic disorder characterized by hyperglycemia. It affects millions of people worldwide and is a major public health concern.\n\nDefinition: Diabetes mellitus is defined as a group of metabolic diseases characterized by elevated blood glucose levels resulting from defects in insulin secretion, insulin action, or both.\n\nEpidemiology: The global prevalence of diabetes has been rising steadily. In India, an estimated 77 million adults have diabetes, with projections reaching 134 million by 2045. Type 2 diabetes accounts for 90-95% of all cases.\n\nManagement: Management of diabetes involves lifestyle modification, oral hypoglycemic agents, and insulin therapy. First-line therapy is metformin 500mg twice daily. [chunk_abc123]\n\nConclusion: Diabetes mellitus requires lifelong management with a combination of lifestyle changes and pharmacotherapy to prevent complications.",
+    "pdf_path": "/home/user/.medrack/cache/psm-module-1/diabetes/q001.pdf",
+    "stale": false,
+    "stale_reasons": [],
+    "versions": {
+      "schema": 2,
+      "prompt": 1,
+      "retrieval": 1,
+      "planner": 0,
+      "validator": 0,
+      "reranker": 0,
+      "renderer": 1,
+      "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
+    },
+    "target_word_count": 775,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "package_version": "0.3.0-backend-freeze",
+    "cached_at": "2025-01-15T11:00:00",
+    "last_validated_at": "2025-01-15T11:00:00",
+    "validation_score": 0.778
+  },
+  "cache_status": {
+    "total_entries": 2,
+    "by_subject": {
+      "psm": 2
+    },
+    "stale_by_subject": {
+      "psm": 1
+    },
+    "schema_version": 1
+  },
+  "stale_response_dry_run": {
+    "ok": true,
+    "dry_run": true,
+    "stale_count": 1,
+    "stale_qids": ["q002"]
+  },
+  "reanswer_response": {
+    "ok": true,
+    "qid": "q001",
+    "marked_stale": true
+  },
+  "log_entries": {
+    "ingestion": [
+      {"book_id": "park_psm_v4", "status": "succeeded", "started_at": "2025-01-15T10:25:00", "finished_at": "2025-01-15T10:30:00", "chunk_count": 1234, "error": null},
+      {"book_id": "park_fmt_v3", "status": "succeeded", "started_at": "2025-01-20T14:10:00", "finished_at": "2025-01-20T14:15:00", "chunk_count": 876, "error": null}
+    ],
+    "generation": [
+      {"qid": "q001", "subject": "psm", "ok": true, "token_count": 1234, "latency_seconds": 5.6, "cache_hit": false},
+      {"qid": "q002", "subject": "psm", "ok": true, "token_count": 567, "latency_seconds": 3.2, "cache_hit": true}
+    ],
+    "validation": [
+      {"qid": "q001", "passed": true, "score": 0.778, "rule_count": 9, "failed_count": 0},
+      {"qid": "q002", "passed": false, "score": 0.5, "rule_count": 9, "failed_count": 1}
+    ],
+    "benchmark": [
+      {"n_questions": 20, "n_success": 40, "n_failure": 0, "cache_hit_rate": 0.5, "total_tokens": 12000, "llm_mode": "mock", "timestamp": "20250629T193408Z"}
+    ]
+  },
+  "errors": {
+    "run_not_found": {
+      "error_code": "RUN_NOT_FOUND",
+      "detail": "benchmark run not found: my-run-id"
+    },
+    "cache_entry_not_found": {
+      "error_code": "CACHE_ENTRY_NOT_FOUND",
+      "detail": "cache entry not found: q001"
+    },
+    "unknown_log": {
+      "error_code": "UNKNOWN_LOG",
+      "detail": "unknown log: badname. Valid: ingestion, generation, validation, benchmark"
+    },
+    "validation_error": {
+      "detail": [
+        {
+          "loc": ["query", "subject"],
+          "msg": "field required",
+          "type": "value_error.missing"
+        }
+      ]
+    }
+  }
+}

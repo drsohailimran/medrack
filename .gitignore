@@ -1,0 +1,52 @@
+# ───────────────────────── Secrets & local config ─────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+ssh_creds.json
+
+# ───────────────────────── Runtime data & logs ────────────────────────────
+# MedRack's data root (books, ChromaDB index, generated answers) lives in
+# MEDRACK_HOME (outside the repo by default), but ignore any local copies.
+/data/
+medrack-data/
+.medrack/
+.run/
+*.log
+
+# ───────────────────────── Python (backend) ───────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ───────────────────────── Node / frontend ────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.output/
+frontend/.nitro/
+frontend/.tanstack/
+frontend/.vinxi/
+frontend/.wrangler/
+frontend/.lovable/
+frontend/.dev.vars
+bun.lock
+bunfig.toml
+
+# ───────────────────────── Editors / OS ───────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
