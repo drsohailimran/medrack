@@ -61,7 +61,12 @@ def _build_prompt(subject: str, body: str) -> str:
         '  "options": for MCQs, an object mapping "a"/"b"/"c"/"d"/... to '
         "option text; for theory questions use an empty object {},\n"
         '  "answer": the correct option letter for MCQs if an answer key is '
-        "visible, else null.\n\n"
+        "visible, else null,\n"
+        '  "chapter": the chapter, unit, or topic heading this question '
+        'appears under (e.g. "Thanatology", "Chapter 3: Injuries", '
+        '"Toxicology - General") if the bank is organised into '
+        "chapters/topics; else null. A chapter heading usually appears once, "
+        "above a run of questions.\n\n"
         "Capture numbered questions (1., 2., Q1, Q.1), bulleted questions, "
         '"Write short notes on ...", "Describe ...", "Explain ...", '
         '"Define ...", "Enumerate ...", and every MCQ. '
@@ -308,6 +313,17 @@ def extract_questions_with_llm(
 
         if progress_cb:
             _safe_progress(progress_cb, idx + 1, total)
+
+    # Forward-fill chapters: a chapter heading usually appears once, ahead of a
+    # run of questions, and may not repeat across LLM batches. Carry the last
+    # seen chapter forward so every question stays tagged with its chapter.
+    _last_ch = ""
+    for q in all_questions:
+        ch = q.get("chapter")
+        ch = re.sub(r"\s+", " ", ch).strip() if isinstance(ch, str) else ""
+        if ch and ch.lower() not in ("null", "none", "n/a", "unknown", "-"):
+            _last_ch = ch
+        q["chapter"] = _last_ch  # "" until the first chapter heading is seen
 
     return all_questions
 

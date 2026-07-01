@@ -332,7 +332,7 @@ def run_solve_bank(
                 "qid": q.get("qid") or f"{safe}::q{i + 1:03d}",
                 "type": q.get("type") or "theory",
                 "question_text": qtext,
-                "module_chapter": q.get("section") or q.get("module_chapter") or "unknown",
+                "module_chapter": q.get("chapter") or q.get("module_chapter") or "unknown",
                 "options": q.get("options", {}) or {},
                 "marks": q.get("marks"),
             }

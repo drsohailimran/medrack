@@ -260,6 +260,14 @@ SUBJECT_CONTEXTS: dict[str, dict[str, str]] = {
         ),
         "key_sources": "WHO, ICMR, MoHFW, NFHS, SRS, UNICEF India",
         "framework": "primary / secondary / tertiary prevention (Park's framework); levels of prevention; natural history of disease",
+        "answer_structure": (
+            "Choose 3-6 headings that fit the question, e.g.: Definition / "
+            "Introduction, Classification or Components, Causes / Aetiology, "
+            "Clinical Features, Management / Prevention, Indian Context (national "
+            "programmes, NFHS/SRS data, legislation), Conclusion. Always open with "
+            "a Definition/Introduction and close with a Conclusion. Weave in Indian "
+            "programme names and statistics (with year and source) where relevant."
+        ),
     },
     "fmt": {
         "display": "Forensic Medicine & Toxicology",
@@ -273,6 +281,24 @@ SUBJECT_CONTEXTS: dict[str, dict[str, str]] = {
         ),
         "key_sources": "ICMR, Supreme Court of India guidelines, MoHFW, NIMHANS",
         "framework": "identification (race, age, sex, stature, DNA, fingerprints); forensic toxicology principles; medical jurisprudence; consent and negligence",
+        "answer_structure": (
+            "Use headings appropriate to FORENSIC MEDICINE & TOXICOLOGY. For a "
+            "GENERAL forensic topic (thanatology, asphyxia, injuries/wounds, "
+            "identification, medical jurisprudence, sexual offences, etc.) use: "
+            "Definition / Introduction, Classification or Types, Characteristic "
+            "Features (and Postmortem Findings where relevant), Medico-Legal "
+            "Importance, Relevant Legal Sections, Conclusion. For a TOXICOLOGY / "
+            "poison question you MUST cover these sections in order: Introduction & "
+            "Source, Fatal Dose & Fatal Period, Mechanism of Action, Signs & "
+            "Symptoms, Diagnosis, Treatment (state the specific antidote and "
+            "management), Postmortem Findings, Medico-Legal Importance — never omit "
+            "Fatal Dose, Treatment, or Postmortem Findings, as they carry major "
+            "marks. ALWAYS include a 'Medico-Legal "
+            "Importance' section — it is essential in forensic answers. Cite legal "
+            "provisions BY SECTION (e.g. Sec 302 IPC and its BNS 2023 equivalent; "
+            "relevant CrPC/BNSS sections) rather than public-health programmes or "
+            "epidemiological statistics."
+        ),
     },
     "generic": {
         "display": "MBBS",
@@ -280,6 +306,12 @@ SUBJECT_CONTEXTS: dict[str, dict[str, str]] = {
         "indian_context": "Indian epidemiological data, national health programmes, MCI/NMC curriculum",
         "key_sources": "WHO, ICMR, MoHFW",
         "framework": "subject-specific analytical framework",
+        "answer_structure": (
+            "Choose 3-6 headings that fit the question, e.g.: Definition / "
+            "Introduction, Classification or Types, Key Features, Applied / Clinical "
+            "Aspects, Relevant Context, Conclusion. Always open with a Definition/"
+            "Introduction and close with a Conclusion."
+        ),
         "fallback": "true",
     },
 }

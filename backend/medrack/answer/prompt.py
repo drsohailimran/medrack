@@ -96,13 +96,12 @@ digraph {{ rankdir=LR; node [shape=box, style=rounded]; "Agent" -> "Reservoir" -
 - Do NOT cite sources in parens (no "(WHO)", "(Park 27e)", "(ICMR)" etc.). This is exam prep — write the answer as if you were a student writing in an exam booklet. Just state the facts.
 
 STRUCTURE — this is important: organise the answer under SHORT SECTION HEADINGS. Do NOT write one long flat list of bullets.
-- Put each section heading on ITS OWN LINE, in Title Case, with NO bullet marker and NO trailing colon (e.g. a line reading exactly: Definition ... or: Indian Context ... or: Conclusion).
+- Put each section heading on ITS OWN LINE, in Title Case, with NO bullet marker and NO trailing colon (e.g. a line reading exactly: Definition ... or: Conclusion).
 - Under each heading, give the relevant "•" bullet points.
-- Choose 3-6 headings that fit the question, e.g.: Definition / Introduction, Classification or Components, Causes / Aetiology, Clinical Features, Management / Prevention, Indian Context (programmes, data, legislation), Conclusion.
-- Always open with a Definition/Introduction heading and close with a Conclusion heading.
+- {answer_structure}
 
-For 5-mark questions: keep it tight — 2-3 headings, a Definition + 4-6 key bullets + a short Conclusion.
-For 10-mark questions: 4-6 headings, each with several bullets, plus Indian Context and Conclusion.
+For 5-mark questions: keep it tight — 2-3 headings and a short Conclusion.
+For 10-mark questions: 4-6 headings, each with several bullets, ending in a Conclusion.
 
 STYLE:
 - "X is ..." for definitions (no source citation).
@@ -224,6 +223,10 @@ def _format_theory_prompt(
         indian_context=subject_ctx["indian_context"],
         key_sources=subject_ctx["key_sources"],
         framework=subject_ctx["framework"],
+        answer_structure=(
+            subject_ctx.get("answer_structure")
+            or SUBJECT_CONTEXTS["generic"]["answer_structure"]
+        ),
     )
 
 

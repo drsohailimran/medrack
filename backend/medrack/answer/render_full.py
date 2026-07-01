@@ -116,7 +116,23 @@ def _build_styles():
             "option", fontName="Helvetica", fontSize=10.5, leading=14,
             leftIndent=20, spaceAfter=2,
         ),
+        # Chapter divider between groups of questions from different chapters.
+        "chapter": S(
+            "chapter", fontName="Helvetica-Bold", fontSize=15, leading=19,
+            alignment=TA_CENTER, textColor=NAVY, spaceBefore=2, spaceAfter=2,
+        ),
     }
+
+
+def _chapter_divider(title: str, styles) -> "KeepTogether":
+    """A centered chapter title framed by two navy rules (kept together so it
+    never orphans at the bottom of a page)."""
+    return KeepTogether([
+        Spacer(1, 18),
+        HRFlowable(width="100%", thickness=1.2, color=NAVY, spaceBefore=0, spaceAfter=6),
+        Paragraph(_rich_safe_text(title.upper()), styles["chapter"]),
+        HRFlowable(width="100%", thickness=1.2, color=NAVY, spaceBefore=6, spaceAfter=12),
+    ])
 
 
 def _answer_flowables(answer_text: str, styles) -> list:
@@ -228,7 +244,22 @@ def render_full_module_pdf(
     story.append(PageBreak())
 
     # ---- Questions (continuous flow, small gap between each) --------------
+    # Chapter dividers: only when the bank actually spans >= 2 real chapters.
+    # A flat bank (no chapter structure -> all "unknown") renders as before.
+    def _chap(a) -> str:
+        c = (a.get("module_chapter") or "").strip()
+        return "" if c.lower() in ("", "unknown") else c
+
+    distinct_chapters = [c for c in dict.fromkeys(_chap(a) for a in answers) if c]
+    use_dividers = len(distinct_chapters) >= 2
+    current_chapter = None
+
     for idx, ans in enumerate(answers, start=1):
+        if use_dividers:
+            ch = _chap(ans)
+            if ch and ch != current_chapter:
+                story.append(_chapter_divider(ch, styles))
+                current_chapter = ch
         qflow = _build_question_flowables(ans, idx, styles)
         # Keep the banner with its first couple of lines so it never orphans
         # at the very bottom of a page.
