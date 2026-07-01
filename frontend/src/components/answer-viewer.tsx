@@ -176,14 +176,14 @@ export function AnswerViewer({ answer }: { answer: string }) {
 
   if (!blocks.length) {
     return (
-      <article className="mx-auto max-w-[80ch] px-8 py-6 font-serif text-[15px]">
+      <article className="mx-auto max-w-[80ch] px-4 py-6 font-serif sm:px-8 text-[15px]">
         <p className="whitespace-pre-wrap leading-relaxed">{answer}</p>
       </article>
     );
   }
 
   return (
-    <article className="mx-auto max-w-[80ch] px-8 py-6 font-serif text-[15px] text-foreground/90">
+    <article className="mx-auto max-w-[80ch] px-4 py-6 font-serif sm:px-8 text-[15px] text-foreground/90">
       {blocks.map((b, i) => {
         if (b.kind === "heading") {
           const cls =

@@ -206,9 +206,9 @@ function Workspace() {
 
   return (
     <AppShell>
-      <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[360px_minmax(0,1fr)]">
         {/* LEFT: the workflow */}
-        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-5">
+        <aside className="flex flex-col gap-4 border-b border-border bg-surface p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div>
             <h1 className="font-display text-lg font-semibold">Generate Answers</h1>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -352,8 +352,8 @@ function Workspace() {
         </aside>
 
         {/* CENTER: preview */}
-        <section className="flex min-h-0 flex-col">
-          <div className="flex items-center justify-between gap-2 border-b border-border px-6 py-3">
+        <section className="flex flex-col lg:min-h-0">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/30">
                 <FileText className="h-4 w-4" />
@@ -382,7 +382,7 @@ function Workspace() {
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto bg-background">
+          <div className="min-h-[55vh] flex-1 overflow-auto bg-background lg:min-h-0">
             {preview.isPending && (
               <div className="grid h-full place-items-center">
                 <div className="text-center">
@@ -398,14 +398,14 @@ function Workspace() {
             )}
             {!preview.isPending && result?.answer_text && (
               <div>
-                <div className="flex items-center gap-2 border-b border-border bg-success/10 px-6 py-2 text-[12px] text-success">
+                <div className="flex items-center gap-2 border-b border-border bg-success/10 px-4 py-2 text-[12px] text-success sm:px-6">
                   <Sparkles className="h-3.5 w-3.5" />
                   <span className="font-medium">Preview ready</span>
                   <span className="text-success/70">·</span>
                   <span>approve on the left to solve the whole module into a PDF</span>
                 </div>
                 {firstQuestion && (
-                  <div className="mx-auto max-w-[80ch] px-8 pt-6">
+                  <div className="mx-auto max-w-[80ch] px-4 pt-6 sm:px-8">
                     <div className="rounded-md bg-primary px-4 py-3 text-sm font-semibold leading-snug text-primary-foreground">
                       Q. {firstQuestion.question_text}
                     </div>

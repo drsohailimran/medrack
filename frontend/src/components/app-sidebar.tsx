@@ -16,9 +16,18 @@ const nav: NavItem[] = [
 ];
 
 export function AppSidebar() {
+  return (
+    <aside className="hidden h-dvh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
+      <SidebarBody />
+    </aside>
+  );
+}
+
+// The sidebar contents, shared by the static desktop sidebar and the mobile
+// drawer. `onNavigate` (used by the drawer) closes the drawer after a tap.
+export function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  // Pull live backend status so the footer reflects the actual server.
   const { data: version } = useQuery({
     queryKey: ["version"],
     queryFn: () => api.getVersion(),
@@ -37,7 +46,7 @@ export function AppSidebar() {
   })();
 
   return (
-    <aside className="hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
+    <div className="flex h-full flex-col">
       <div className="flex h-14 items-center gap-2 px-4">
         <div className="grid h-7 w-7 place-items-center rounded-md bg-primary/15 text-primary ring-1 ring-primary/30">
           <svg
@@ -76,6 +85,7 @@ export function AppSidebar() {
               )}
               <Link
                 to={item.to}
+                onClick={onNavigate}
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "group relative flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sidebar-foreground/85 transition-colors",
@@ -122,6 +132,6 @@ export function AppSidebar() {
           </div>
         </div>
       </div>
-    </aside>
+    </div>
   );
 }

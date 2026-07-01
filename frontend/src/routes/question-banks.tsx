@@ -282,8 +282,8 @@ function QuestionBanksPage() {
       )}
 
       {showUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="surface-card w-full max-w-lg p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="surface-card max-h-[90vh] w-full max-w-lg overflow-y-auto p-6">
             <h2 className="text-lg font-semibold">Upload question bank</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Select a PDF containing a list of questions (MCQ or theory). The backend runs the
@@ -299,7 +299,7 @@ function QuestionBanksPage() {
                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Subject">
                   <select
                     value={bankSubject}

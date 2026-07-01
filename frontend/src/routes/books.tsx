@@ -134,8 +134,8 @@ function BooksPage() {
         </div>
       )}
       {showImportDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="surface-card w-full max-w-md p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="surface-card max-h-[90vh] w-full max-w-md overflow-y-auto p-6">
             <h2 className="text-lg font-semibold">Import Book</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Upload a PDF from this device. It is ingested into the knowledge base (extract → chunk
