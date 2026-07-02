@@ -155,6 +155,48 @@ def _chapter_heading(line: str) -> str | None:
     return f"{prefix}: {title}" if title else prefix
 
 
+_LEGIT_SHORT = {
+    "IPC", "MTP", "CRPC", "BNS", "BNSS", "POCSO", "NDPS", "DNA", "HIV", "STD",
+    "MCI", "NMC", "AIDS", "MLC", "FIR", "IEA", "PNDT", "ICU", "CPR", "ECG",
+}
+_HAS_DIGIT_PAREN = re.compile(r"[\d()]")
+
+
+def _looks_codeish(w: str) -> bool:
+    """True if a token looks like a page-reference / exam appearance code
+    (e.g. "D02", "J15(RS3)", "Jo7", "Doa") rather than real question text."""
+    w = w.strip(",.;:")
+    if not w:
+        return True
+    if w.upper() in _LEGIT_SHORT:
+        return False
+    if _HAS_DIGIT_PAREN.search(w):
+        return True
+    return bool(re.fullmatch(r"[A-Za-z]{1,3}", w))
+
+
+def clean_question_text(text: str) -> str:
+    """Clean a question extracted from a scanned page-reference index: drop a
+    leading answer-type sub-number ("3. ...") and a trailing page-number +
+    exam-code tail ("... 275 Jo7(OS)"), while preserving legitimate content
+    like "Section 304-A IPC"."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    t = re.sub(r"^\s*\d{1,3}\s*[.\)]\s*", "", t)  # leading sub-number
+    words = t.split()
+    for i in range(len(words) - 1, -1, -1):
+        if re.fullmatch(r"\d{2,3}", words[i].strip(".,")):
+            tail = words[i + 1:]
+            if tail and all(_looks_codeish(w) for w in tail):
+                cut = i
+                if cut > 0 and words[cut - 1].upper() in ("CA", "CN"):
+                    cut -= 1
+                t = " ".join(words[:cut]).rstrip(" .,;:")
+                if t and not t.endswith(("?", ".")):
+                    t += "."
+                break
+    return t.strip()
+
+
 def _clean_chapter(value: str | None) -> str:
     """Normalise a chapter value; drop answer-type headings that aren't chapters."""
     s = re.sub(r"\s+", " ", value or "").strip()
@@ -353,9 +395,10 @@ def extract_questions_with_llm(
         for q in questions:
             if not isinstance(q, dict):
                 continue
-            qt = (q.get("question_text") or "").strip()
-            if not qt:
-                continue
+            qt = clean_question_text(q.get("question_text") or "")
+            if not qt or len(qt) < 4:
+                continue  # empty or pure page-reference/exam-code pollution
+            q["question_text"] = qt
             # De-dupe on the FULL normalised text — a truncated key would
             # wrongly merge distinct questions that share a long prefix
             # (e.g. "Write short notes on: (a) X" vs "(b) Y").
