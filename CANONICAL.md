@@ -28,7 +28,7 @@ Ubuntu mirrors: `/home/sohail/medrack/docs/`, `/home/sohail/medrack-data/`.
 | Windows workspace | `C:\Medrack` |
 | Launcher | `C:\Medrack\launcher\` |
 | OCR agent | `C:\medrack-ocr\` |
-| Ubuntu app | `/home/sohail/medrack` (v1.0.0) |
+| Ubuntu app | `/home/sohail/medrack` (**v1.1.0**) |
 | Ubuntu data | `/home/sohail/medrack-data` |
 | UI | http://192.168.29.82:3010 |
 | API | http://192.168.29.82:8010/api/v1 |
