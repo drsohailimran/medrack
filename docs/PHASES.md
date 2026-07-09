@@ -5,7 +5,7 @@ Do **not** start Pn+1 until the owner explicitly approves Pn.
 
 **Full context:** `MEDRACK_FULL_SYSTEM_HANDOFF.md`  
 **Priority:** answer quality > overnight stability > speed  
-**Canonical app:** `/home/sohail/medrack` (v1.0.0) · **Data:** `/home/sohail/medrack-data`
+**Canonical app:** `/home/sohail/medrack` (**v1.1.0**) · **Data:** `/home/sohail/medrack-data`
 
 ---
 
@@ -424,8 +424,8 @@ Frontend: rebuilt node-server; :3010 up; bundle includes llm/status + cancel
 | 2026-07-10 | Owner: **do not mass-ingest textbooks now**; prefer solid/reliable system; P2 content deferred |
 | 2026-07-10 | Owner: proceed with **P3** (stop-gen + LLM indicator); P2 still deferred |
 | 2026-07-10 | **P3 COMPLETE — APPROVED** by owner; next is P4 (or deferred P2) when owner says start |
+| 2026-07-10 | **P4 COMPLETE — APPROVED**; GitHub **v1.1.0** release (code freeze P0–P4) |
 
 ---
 
 *Update this file whenever a phase moves. Mirror to Ubuntu: `/home/sohail/medrack/docs/PHASES.md` and `/home/sohail/medrack-data/PHASES.md`.*
-| 2026-07-10 | **P4 COMPLETE — APPROVED**; GitHub **v1.1.0** release |
