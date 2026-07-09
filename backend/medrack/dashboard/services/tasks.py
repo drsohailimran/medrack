@@ -340,6 +340,26 @@ def run_hybrid_ingest_book(
     result["clean_pdf"] = str(clean_path)
     result["ocr_job_id"] = ocr_job_id
     result["use_marker"] = use_marker
+    # Surface auto-Marker report from the Windows agent when available.
+    try:
+        if ocr_job_id and mode == "push":
+            import httpx as _httpx
+            with _httpx.Client(timeout=15.0) as _c:
+                st = _c.get(f"{agent}/v1/jobs/{ocr_job_id}")
+                if st.status_code == 200:
+                    body = st.json() or {}
+                    r0 = body.get("result") or {}
+                    if r0.get("marker") is not None:
+                        result["marker"] = r0.get("marker")
+                    if r0.get("marker_ranges") is not None:
+                        result["marker_ranges"] = r0.get("marker_ranges")
+        elif ocr_job_id and mode == "pull":
+            meta = ocr_bridge.load_meta(ocr_job_id) or {}
+            # pull path may not embed marker; leave optional
+            if meta.get("marker") is not None:
+                result["marker"] = meta.get("marker")
+    except Exception:
+        pass
     progress(100, "Done — book indexed; Qwopus should be back online")
     return result
 

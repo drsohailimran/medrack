@@ -508,7 +508,8 @@ Scratchpad contents (Park’s 27th hybrid OCR):
 
 - [x] GitHub matches machines (backend/frontend/docs/windows launcher+OCR)
 - [x] Archives retained on Ubuntu (`medrack-ARCHIVE-20260709`) — DO_NOT_USE, not deleted
-- [x] Marker true per-page + denser Park’s re-chunk documented as optional residual
+- [x] **Auto Marker page detect** (post-v1.1.0): RapidOCR → score pages → Marker only on table-like pages (capped); any textbook  
+- [x] Denser Park’s re-chunk still optional residual if retrieval feels thin
 
 
 ---

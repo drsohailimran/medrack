@@ -384,7 +384,7 @@ Frontend: rebuilt node-server; :3010 up; bundle includes llm/status + cancel
 
 - [x] Push ops fixes so GitHub matches machines (v1.1.0 release)
 - [x] Document archive (`medrack-ARCHIVE-*`) — **left on disk**, not deleted (recoverable; marked DO_NOT_USE)
-- [x] Marker page alignment — **documented residual** (char-split chapters acceptable for now; true per-page is future)
+- [x] Marker page selection — **auto-detect** after RapidOCR (heuristic table score → Marker ranges; any textbook). Char-split within multi-page Marker ranges remains a mild residual.
 - [x] Park’s denser re-chunk — **deferred** until owner re-ingests books (P2); not required for v1.1.0 code freeze
 
 ### Exit criteria

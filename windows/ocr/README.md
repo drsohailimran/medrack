@@ -7,8 +7,8 @@ Troubleshooting: `C:\Medrack\docs\TROUBLESHOOTING.md` and `docs/PHASES.md` §P1.
 
 1. Double-click **Start MedRack**  
    - Starts Qwopus, Ubuntu stack, **this OCR agent** (minimized), and an **SSH reverse tunnel** so Ubuntu can reach the agent.  
-2. In the browser: **Books** → Hybrid OCR (on) → upload PDF → **Upload · OCR · ingest**  
-3. One click does: **stop Qwopus → RapidOCR → validate → text PDF → start Qwopus → index**  
+2. In the browser: **Books** → Hybrid OCR (on) → Auto Marker (on) → upload PDF → **Upload · OCR · ingest**  
+3. One click does: **stop Qwopus → RapidOCR → auto-detect table pages → Marker on those only → validate → text PDF → start Qwopus → index**  
 
 **Stop MedRack** stops the model, OCR agent, and tunnel.
 
@@ -40,10 +40,13 @@ C:\medrack-ocr\OPEN-FIREWALL-ONCE.cmd
 
 1. Stop Qwopus (`qwopus.stop` + kill llama-server)  
 2. RapidOCR full book (resumable page cache under `jobs/<id>/work/rapidocr_cache`)  
-3. Optional Marker on table ranges  
-4. **Validate** (nonempty page ratio / avg chars)  
-5. Build full text PDF (`pipeline/build_text_pdf.py` — no 50×80 truncation)  
-6. Start Qwopus (scheduled task / bat)  
+3. **Auto table detect** — score every page (short lines, multi-column gaps, digit grids); pick top ranges (capped ~18% of pages / max 180)  
+4. **Marker** only on those ranges (any textbook; not hard-coded Park’s pages). Disable via UI checkbox for speed.  
+5. **Validate** (nonempty page ratio / avg chars)  
+6. Build full text PDF (`pipeline/build_text_pdf.py` — no 50×80 truncation)  
+7. Start Qwopus (scheduled task / bat)  
+
+Optional env: `MEDRACK_MARKER_LEGACY_PARKS=1` falls back to old Park’s page list if auto finds nothing. 
 
 ## Layout
 

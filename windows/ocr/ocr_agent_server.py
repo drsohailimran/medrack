@@ -35,7 +35,7 @@ TOKEN = os.environ.get("MEDRACK_OCR_TOKEN", "medrack-ocr")
 HEADERS = {"X-OCR-Token": TOKEN}
 ENABLE_PULL = os.environ.get("MEDRACK_OCR_PULL", "1").strip() not in ("0", "false", "no")
 
-app = FastAPI(title="MedRack OCR Agent", version="1.1.0")
+app = FastAPI(title="MedRack OCR Agent", version="1.2.0")
 _lock = threading.Lock()
 _jobs: Dict[str, Dict[str, Any]] = {}
 
@@ -101,7 +101,8 @@ def health():
     return {
         "ok": True,
         "service": "medrack-ocr-agent",
-        "version": "1.1.0",
+        "version": "1.2.0",
+        "auto_marker": True,
         "pull_loop": ENABLE_PULL,
         "model": model_control.model_status(),
     }

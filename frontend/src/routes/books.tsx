@@ -40,7 +40,7 @@ function BooksPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [replaceExisting, setReplaceExisting] = useState(false);
   const [hybridOcr, setHybridOcr] = useState(true);
-  const [useMarker, setUseMarker] = useState(false);
+  const [useMarker, setUseMarker] = useState(true); // auto-detect table pages when hybrid OCR is on
   const [importError, setImportError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const ingest = useJob("medrack:ingestJob");
@@ -221,7 +221,7 @@ function BooksPage() {
                   onChange={(e) => setUseMarker(e.target.checked)}
                   disabled={busy || !hybridOcr}
                 />
-                Also run Marker on table-heavy ranges (slower; better tables)
+                Auto Marker on table pages (recommended) — after RapidOCR, detects multi-column/table pages and re-OCR those with Marker for better retrieval
               </label>
             </div>
             {ingesting && ingest.job && (

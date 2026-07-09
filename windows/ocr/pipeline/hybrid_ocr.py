@@ -1,8 +1,14 @@
-"""Hybrid OCR Plan C: RapidOCR full book + optional Marker table ranges."""
+"""Hybrid OCR Plan C: RapidOCR full book + auto/optional Marker table ranges.
+
+After RapidOCR, pages are scored for table-like / multi-column layout. High-
+scoring pages are grouped into ranges and optionally re-OCR'd with Marker.
+Works for any textbook — not limited to hardcoded Park's page numbers.
+"""
 from __future__ import annotations
 
 import io
 import json
+import re
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -13,7 +19,8 @@ from pypdf import PdfReader
 
 ProgressFn = Callable[[float, str], None]
 
-# Default Marker ranges used for Park's 27th (0-based inclusive page indices).
+# Legacy fallback ranges (Park's 27th, 0-based inclusive). Used only when
+# auto-detect finds nothing AND MEDRACK_MARKER_LEGACY_PARKS=1 is set.
 DEFAULT_MARKER_RANGES: List[Tuple[int, int, str]] = [
     (419, 440, "NCD_Epidemiology"),
     (503, 528, "Health_Programmes"),
@@ -23,6 +30,14 @@ DEFAULT_MARKER_RANGES: List[Tuple[int, int, str]] = [
     (974, 987, "Biostatistics"),
     (999, 1011, "Health_Planning"),
 ]
+
+# Auto-detect caps — keep Marker jobs bounded (hours, not days).
+# max fraction of book pages that may go to Marker; hard cap in pages.
+AUTO_MARKER_MIN_SCORE = 0.48
+AUTO_MARKER_MAX_FRACTION = 0.18
+AUTO_MARKER_MAX_PAGES = 180
+AUTO_MARKER_MAX_RANGE_SPAN = 28  # pages per Marker temp-PDF call
+AUTO_MARKER_MERGE_GAP = 1  # merge islands within this many skipped pages
 
 
 def _order_rapidocr(res, width: int) -> str:
@@ -125,6 +140,207 @@ def rapidocr_book(
     return pages
 
 
+def score_page_for_marker(text: str) -> Dict[str, float | int | bool]:
+    """Score how much a RapidOCR page looks like it needs Marker (tables/layout).
+
+    Returns a dict with ``score`` in ``[0, 1]`` plus diagnostic fields.
+    Pure text heuristics — fast, no GPU, works on any textbook language.
+    """
+    raw = text or ""
+    stripped = raw.strip()
+    if len(stripped) < 40:
+        return {"score": 0.0, "lines": 0, "reason": "too_short"}
+
+    lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+    n_lines = len(lines)
+    if n_lines == 0:
+        return {"score": 0.0, "lines": 0, "reason": "empty"}
+
+    n_chars = sum(len(ln) for ln in lines)
+    avg_line_len = n_chars / n_lines
+    short_lines = sum(1 for ln in lines if len(ln) <= 28)
+    short_ratio = short_lines / n_lines
+
+    digit_chars = sum(ch.isdigit() for ch in stripped)
+    alpha_chars = sum(ch.isalpha() for ch in stripped)
+    digit_ratio = digit_chars / max(1, n_chars)
+    alpha_ratio = alpha_chars / max(1, n_chars)
+
+    # Multi-column / table separators in OCR text
+    multi_space_lines = sum(1 for ln in lines if re.search(r"\S\s{2,}\S", ln))
+    multi_space_ratio = multi_space_lines / n_lines
+    pipe_lines = sum(1 for ln in lines if ln.count("|") >= 2 or ln.count("¦") >= 1)
+    pipe_ratio = pipe_lines / n_lines
+    # Lines that look like data rows: several tokens, many digits
+    data_rowish = 0
+    for ln in lines:
+        toks = re.findall(r"\S+", ln)
+        if len(toks) >= 4:
+            dig_toks = sum(1 for t in toks if any(c.isdigit() for c in t))
+            if dig_toks >= 2 and dig_toks / len(toks) >= 0.35:
+                data_rowish += 1
+    data_row_ratio = data_rowish / n_lines
+
+    # Broken layout: many very short lines + decent page length → grid/table
+    dense_short = 1.0 if (n_lines >= 25 and avg_line_len <= 22) else (
+        0.6 if (n_lines >= 18 and avg_line_len <= 30) else 0.0
+    )
+
+    score = 0.0
+    score += 0.28 * min(1.0, short_ratio / 0.55)
+    score += 0.22 * min(1.0, multi_space_ratio / 0.35)
+    score += 0.18 * min(1.0, data_row_ratio / 0.25)
+    score += 0.12 * min(1.0, digit_ratio / 0.22)
+    score += 0.10 * min(1.0, pipe_ratio / 0.15)
+    score += 0.10 * dense_short
+    # Penalize normal prose (long lines, high alpha, few numbers)
+    if avg_line_len >= 45 and alpha_ratio >= 0.70 and digit_ratio < 0.08:
+        score *= 0.35
+    if alpha_ratio >= 0.78 and short_ratio < 0.25 and multi_space_ratio < 0.12:
+        score *= 0.40
+
+    score = max(0.0, min(1.0, score))
+    return {
+        "score": round(score, 4),
+        "lines": n_lines,
+        "avg_line_len": round(avg_line_len, 1),
+        "short_ratio": round(short_ratio, 3),
+        "digit_ratio": round(digit_ratio, 3),
+        "multi_space_ratio": round(multi_space_ratio, 3),
+        "data_row_ratio": round(data_row_ratio, 3),
+        "needs_marker": score >= AUTO_MARKER_MIN_SCORE,
+    }
+
+
+def detect_marker_page_indices(
+    pages: Sequence[str],
+    *,
+    min_score: float = AUTO_MARKER_MIN_SCORE,
+    max_fraction: float = AUTO_MARKER_MAX_FRACTION,
+    max_pages: int = AUTO_MARKER_MAX_PAGES,
+) -> Tuple[List[int], List[Dict]]:
+    """Return 0-based page indices that should go through Marker.
+
+    Caps selection so a false-positive heuristic cannot send the whole book
+    to Marker (which would take many hours).
+    """
+    scored: List[Tuple[float, int, Dict]] = []
+    details: List[Dict] = []
+    for i, text in enumerate(pages):
+        info = score_page_for_marker(text or "")
+        info = dict(info)
+        info["page"] = i  # 0-based
+        info["page_1based"] = i + 1
+        details.append(info)
+        if float(info.get("score") or 0) >= min_score:
+            scored.append((float(info["score"]), i, info))
+
+    # Highest scores first when we must cap
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    n = max(1, len(pages))
+    budget = min(max_pages, max(1, int(n * max_fraction)))
+    chosen = sorted(idx for _, idx, _ in scored[:budget])
+    return chosen, details
+
+
+def group_indices_to_ranges(
+    indices: Sequence[int],
+    *,
+    merge_gap: int = AUTO_MARKER_MERGE_GAP,
+    max_span: int = AUTO_MARKER_MAX_RANGE_SPAN,
+) -> List[Tuple[int, int, str]]:
+    """Merge nearby page indices into Marker ranges ``(start, end, name)``."""
+    if not indices:
+        return []
+    sorted_idx = sorted(set(int(i) for i in indices if i >= 0))
+    ranges: List[Tuple[int, int, str]] = []
+    start = sorted_idx[0]
+    prev = sorted_idx[0]
+    for idx in sorted_idx[1:]:
+        # Close enough to merge, and span would stay within max_span
+        if idx - prev <= merge_gap + 1 and (idx - start) < max_span:
+            prev = idx
+            continue
+        ranges.append((start, prev, f"auto_{start:04d}_{prev:04d}"))
+        start = idx
+        prev = idx
+    ranges.append((start, prev, f"auto_{start:04d}_{prev:04d}"))
+    return ranges
+
+
+def select_marker_ranges(
+    pages: Sequence[str],
+    *,
+    explicit_ranges: Optional[Sequence[Tuple[int, int, str]]] = None,
+    auto: bool = True,
+    min_score: float = AUTO_MARKER_MIN_SCORE,
+) -> Tuple[List[Tuple[int, int, str]], Dict]:
+    """Choose Marker ranges for this book.
+
+    Priority:
+    1. ``explicit_ranges`` if provided (tests / manual override)
+    2. Auto-detect from RapidOCR text (default for any textbook)
+    3. Optional legacy Park's ranges if env ``MEDRACK_MARKER_LEGACY_PARKS=1``
+       and auto found nothing
+    """
+    import os
+
+    report: Dict = {
+        "mode": "none",
+        "selected_pages": 0,
+        "ranges": [],
+        "min_score": min_score,
+        "capped": False,
+    }
+    if explicit_ranges is not None:
+        ranges = list(explicit_ranges)
+        report["mode"] = "explicit"
+        report["selected_pages"] = sum(max(0, e - s + 1) for s, e, _ in ranges)
+        report["ranges"] = [{"start": s, "end": e, "name": n} for s, e, n in ranges]
+        return ranges, report
+
+    if not auto:
+        report["mode"] = "disabled"
+        return [], report
+
+    indices, details = detect_marker_page_indices(pages, min_score=min_score)
+    n = max(1, len(pages))
+    budget = min(AUTO_MARKER_MAX_PAGES, max(1, int(n * AUTO_MARKER_MAX_FRACTION)))
+    high = sum(1 for d in details if float(d.get("score") or 0) >= min_score)
+    report["capped"] = high > budget
+    report["candidates"] = high
+    report["top_scores"] = sorted(
+        (
+            {"page_1based": d["page_1based"], "score": d["score"]}
+            for d in details
+            if float(d.get("score") or 0) >= min_score
+        ),
+        key=lambda x: -float(x["score"]),
+    )[:40]
+
+    ranges = group_indices_to_ranges(indices)
+    if ranges:
+        report["mode"] = "auto"
+        report["selected_pages"] = len(indices)
+        report["ranges"] = [{"start": s, "end": e, "name": n} for s, e, n in ranges]
+        return ranges, report
+
+    if os.environ.get("MEDRACK_MARKER_LEGACY_PARKS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        report["mode"] = "legacy_parks"
+        ranges = list(DEFAULT_MARKER_RANGES)
+        report["selected_pages"] = sum(max(0, e - s + 1) for s, e, _ in ranges)
+        report["ranges"] = [{"start": s, "end": e, "name": n} for s, e, n in ranges]
+        return ranges, report
+
+    report["mode"] = "auto_none"
+    return [], report
+
+
 def apply_marker_ranges(
     pdf_path: Path,
     pages: List[str],
@@ -152,7 +368,7 @@ def apply_marker_ranges(
             frac = (ri + 0.5) / max(1, n_ranges)
             progress(
                 progress_lo + (progress_hi - progress_lo) * frac,
-                f"Marker {name} pages {start}-{end}",
+                f"Marker {name} pages {start + 1}-{end + 1}",
             )
         md_path = marker_out / f"marker_{start:04d}-{end:04d}_{name}.md"
         content = ""
@@ -174,16 +390,20 @@ def apply_marker_ranges(
         num_pages = end - start + 1
         if num_pages <= 0:
             continue
-        chunk = max(1, len(content) // num_pages)
-        for i in range(num_pages):
-            pidx = start + i
-            if pidx < 0 or pidx >= len(out):
-                continue
-            a = i * chunk
-            b = a + chunk if i < num_pages - 1 else len(content)
-            piece = content[a:b].strip()
-            if piece:
-                out[pidx] = piece
+        if num_pages == 1:
+            if content.strip():
+                out[start] = content.strip()
+        else:
+            chunk = max(1, len(content) // num_pages)
+            for i in range(num_pages):
+                pidx = start + i
+                if pidx < 0 or pidx >= len(out):
+                    continue
+                a = i * chunk
+                b = a + chunk if i < num_pages - 1 else len(content)
+                piece = content[a:b].strip()
+                if piece:
+                    out[pidx] = piece
 
         if progress:
             progress(
@@ -296,6 +516,8 @@ def run_hybrid_pipeline(
     pages: List[str] = []
     clean_pdf = work_dir / "clean_text.pdf"
     validation: Dict = {}
+    marker_report: Dict = {"mode": "disabled", "selected_pages": 0, "ranges": []}
+    ranges_used: List[Tuple[int, int, str]] = []
 
     try:
         if progress:
@@ -309,20 +531,35 @@ def run_hybrid_pipeline(
         )
 
         if use_marker:
-            ranges = (
-                list(marker_ranges)
-                if marker_ranges is not None
-                else list(DEFAULT_MARKER_RANGES)
-            )
-            pages = apply_marker_ranges(
-                pdf_path,
+            if progress:
+                progress(70.5, "Scoring pages for tables / multi-column layout…")
+            ranges_used, marker_report = select_marker_ranges(
                 pages,
-                ranges,
-                marker_out,
-                progress=progress,
-                progress_lo=70,
-                progress_hi=85,
+                explicit_ranges=marker_ranges,
+                auto=True,
             )
+            n_sel = int(marker_report.get("selected_pages") or 0)
+            if ranges_used:
+                if progress:
+                    progress(
+                        71,
+                        f"Auto Marker: {n_sel} page(s) in {len(ranges_used)} range(s) "
+                        f"({marker_report.get('mode')})",
+                    )
+                pages = apply_marker_ranges(
+                    pdf_path,
+                    pages,
+                    ranges_used,
+                    marker_out,
+                    progress=progress,
+                    progress_lo=71,
+                    progress_hi=86,
+                )
+            elif progress:
+                progress(
+                    78,
+                    "Marker: no table-heavy pages detected — RapidOCR only",
+                )
         elif progress:
             progress(78, "Marker skipped (use_marker=false)")
 
@@ -353,6 +590,11 @@ def run_hybrid_pipeline(
         "validation": validation,
         "elapsed_sec": round(time.time() - t0, 1),
         "use_marker": use_marker,
+        "marker": marker_report if use_marker else {"mode": "disabled"},
+        "marker_ranges": [
+            {"start": s, "end": e, "name": n, "pages_1based": f"{s + 1}-{e + 1}"}
+            for s, e, n in (ranges_used if use_marker else [])
+        ],
         "model_stop": stop_info,
         "model_start": start_info,
         "work_dir": str(work_dir),
