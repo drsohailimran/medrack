@@ -429,3 +429,4 @@ Frontend: rebuilt node-server; :3010 up; bundle includes llm/status + cancel
 ---
 
 *Update this file whenever a phase moves. Mirror to Ubuntu: `/home/sohail/medrack/docs/PHASES.md` and `/home/sohail/medrack-data/PHASES.md`.*
+| 2026-07-10 | **v1.2.0** released: auto Marker, HANDOVER.md, Windows C:\\Medrack consolidation, E2E verified |

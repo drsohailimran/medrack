@@ -1,4 +1,4 @@
-# MedRack launcher - shared configuration.
+﻿# MedRack launcher - shared configuration.
 # Edit these values if your network/paths ever change.
 # Dot-sourced by medrack-launcher.ps1, medrack-stop.ps1 and setup-medrack-launcher.ps1.
 
@@ -27,14 +27,15 @@ $MedrackConfig = @{
     ModelWaitSec    = 300           # 21GB model can take a while to load
     FrontendWaitSec = 120
 
-    # --- Windows OCR agent (P1 hybrid book ingest — started with MedRack) ---
+    # --- Windows OCR agent (P1 hybrid book ingest â€” started with MedRack) ---
     OcrAgentPort    = 8090
-    OcrAgentDir     = 'C:\medrack-ocr'
-    OcrAgentPython  = 'C:\medrack-ocr\venv\Scripts\python.exe'
-    OcrAgentScript  = 'C:\medrack-ocr\ocr_agent_server.py'
-    OcrAgentStopFlag = 'C:\medrack-ocr\ocr-agent.stop'
+    OcrAgentDir     = 'C:\Medrack\ocr'
+    OcrAgentPython  = 'C:\Medrack\ocr\venv\Scripts\python.exe'
+    OcrAgentScript  = 'C:\Medrack\ocr\ocr_agent_server.py'
+    OcrAgentStopFlag = 'C:\Medrack\ocr\ocr-agent.stop'
     # Ubuntu often cannot open Windows:8090 (firewall). Tunnel agent to Linux:
     #   Linux localhost:18090 -> this PC :8090
     OcrTunnelRemotePort = 18090
     # Ubuntu .env should use: MEDRACK_OCR_AGENT_URL=http://127.0.0.1:18090
 }
+

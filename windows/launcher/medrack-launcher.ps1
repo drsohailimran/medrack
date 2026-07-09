@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  MedRack - one-click start (daily use)
 #  Double-click the "Start MedRack" desktop shortcut.
 #
@@ -110,7 +110,7 @@ try {
     }
 
     # ===== 1b. OCR agent on this PC (hybrid book ingest) =====
-    # Runs in background so Books → Hybrid OCR can stop the model, OCR,
+    # Runs in background so Books â†’ Hybrid OCR can stop the model, OCR,
     # validate, and restart the model without a separate manual window.
     if ($cfg.OcrAgentPort -and (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800)) {
         Set-Status 'OCR agent already running.'
@@ -137,8 +137,8 @@ try {
     }
 
     # ===== 1c. SSH reverse tunnel: Linux:18090 -> this PC:8090 =====
-    # Windows Firewall often blocks Ubuntu→Windows:8090 even with an allow rule.
-    # Tunneling through the existing SSH path (Windows→Ubuntu) always works.
+    # Windows Firewall often blocks Ubuntuâ†’Windows:8090 even with an allow rule.
+    # Tunneling through the existing SSH path (Windowsâ†’Ubuntu) always works.
     if ($cfg.OcrTunnelRemotePort -and (Test-Path $cfg.SshKey)) {
         Set-Status 'Opening OCR tunnel to the server...'
         # Kill any old tunnel on the same remote port (best effort)
@@ -205,3 +205,4 @@ finally {
     $form.Close()
     $form.Dispose()
 }
+

@@ -1,50 +1,33 @@
-# MedRack — single workspace map
+﻿# MedRack — single workspace map
 
-**Last verified:** 2026-07-10
+**Version:** 1.2.0 · **Last verified:** 2026-07-10
 
-## Read first (in order)
+## Read first
 
-1. `C:\Medrack\docs\PHASES.md` — status + what to do next  
-2. `C:\Medrack\docs\TROUBLESHOOTING.md` — when something breaks  
-3. `C:\Medrack\docs\MEDRACK_FULL_SYSTEM_HANDOFF.md` — full system context  
-4. `C:\medrack-ocr\README.md` — hybrid OCR agent  
+1. `C:\Medrack\docs\HANDOVER.md` — **full system for any AI** (start here)
+2. `C:\Medrack\docs\PHASES.md`
+3. `C:\Medrack\docs\TROUBLESHOOTING.md`
+4. `C:\Medrack\ocr\README.md`
 
-Ubuntu mirrors: `/home/sohail/medrack/docs/`, `/home/sohail/medrack-data/`.
+## Windows layout (only root)
 
-## Phase status
-
-| Phase | Status |
-|-------|--------|
-| **P0** Bulletproof answers | **COMPLETE — APPROVED** (2026-07-09) |
-| **P1** Hybrid OCR ingest | **COMPLETE — APPROVED** (2026-07-10; may revisit) |
-| **P2** Multi-subject book ingest | **DEFERRED** — owner will ingest later |
-| P3 UX (stop-gen + LLM indicator) | **COMPLETE — APPROVED** (2026-07-10) |
-| P4 Housekeeping | **COMPLETE — APPROVED** (v1.1.0, 2026-07-10) |
-
-## Canonical paths
-
-| Role | Path |
+| Path | Role |
 |------|------|
-| Windows workspace | `C:\Medrack` |
-| Launcher | `C:\Medrack\launcher\` |
-| OCR agent | `C:\medrack-ocr\` |
-| Ubuntu app | `/home/sohail/medrack` (**v1.1.0**) |
-| Ubuntu data | `/home/sohail/medrack-data` |
-| UI | http://192.168.29.82:3010 |
-| API | http://192.168.29.82:8010/api/v1 |
-| Model (Windows) | :8080 |
-| OCR agent (Windows) | :8090 |
-| OCR tunnel (on Ubuntu) | `http://127.0.0.1:18090` |
+| `C:\Medrack\` | **Only** Windows workspace |
+| `C:\Medrack\launcher\` | Start/Stop + tunnel |
+| `C:\Medrack\ocr\` | Hybrid OCR agent |
+| `C:\Medrack\docs\` | Docs including HANDOVER |
+| `C:\Medrack\archive\` | Dead copies |
 
-## Daily use
+Legacy `C:\medrack-ocr\` is obsolete if present.
 
-1. **Start MedRack** (model + Ubuntu + OCR agent + tunnel)  
-2. Browser → UI  
-3. Hybrid book: **Books** → Hybrid OCR → upload  
-4. **Stop MedRack** when done  
+## Ubuntu
 
-## Archives (not the app)
+| Path | Role |
+|------|------|
+| `/home/sohail/medrack` | App **v1.2.0** |
+| `/home/sohail/medrack-data` | Data |
 
-- `C:\Medrack\archive\`  
-- `/home/sohail/medrack-ARCHIVE-20260709/`  
-- `/home/sohail/.hermes/medrack/` (stub only)  
+## GitHub
+
+https://github.com/drsohailimran/medrack · **v1.2.0**

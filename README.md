@@ -1,43 +1,27 @@
 # MedRack
 
-**Release: v1.1.0** (2026-07-10)
+**Release: v1.2.0** (2026-07-10)
 
-Local-first MBBS exam answer RAG for Sohail & family. Canonical deploy: Ubuntu app + Windows Qwopus + hybrid OCR agent.
+Local-first MBBS exam answer RAG. Ubuntu API/UI + Windows Qwopus + hybrid OCR.
 
-### v1.1.0 highlights
-- **P0** Bulletproof answers — scope/grounding/validator, length bands, stale cache (`prompt:6`, `validator:5`)
-- **P1** Hybrid OCR ingest — Windows RapidOCR (+ optional Marker) via agent + reverse tunnel; one-button Books UI
-- **P2** Multi-subject mass book ingest — **deferred** (owner-driven; hybrid path ready)
-- **P3** UX — stop generation mid-batch + keep/delete review; live LLM indicator in top bar
-- **P4** Housekeeping — repo matches machines; Windows launcher + OCR agent in tree; archive left on server only
+### v1.2.0
+- Auto Marker page detection (any textbook) after RapidOCR
+- Full **HANDOVER.md** for zero-context operators/AIs
+- Windows single-folder layout: `C:\Medrack\` (launcher + ocr + docs)
+- E2E verified hybrid ingest + generate
+- Package version **1.2.0**
 
-### Quick layout
+### Read first
+- [`docs/HANDOVER.md`](docs/HANDOVER.md) — complete system map, APIs, troubleshooting, how to extend
+
+### Layout
 ```
-backend/          FastAPI + RAG pipeline (package medrack)
-frontend/         TanStack Start UI (build: nitro node-server)
-docs/             PHASES, handoff, troubleshooting
-windows/launcher  Start/Stop MedRack (Windows)
-windows/ocr       Hybrid OCR agent (Windows)
-start_stack.sh    Ubuntu API + UI + Gradio
+backend/   FastAPI + RAG
+frontend/  TanStack UI
+docs/      HANDOVER, PHASES, troubleshooting
+windows/launcher  Start/Stop MedRack
+windows/ocr       Hybrid OCR agent sources
 ```
-
-### Production ports (LAN)
-- UI: `http://<ubuntu>:3010`
-- API: `http://<ubuntu>:8010/api/v1`
-- Qwopus: Windows `:8080`
-- OCR agent: Windows `:8090` (Ubuntu reaches via reverse tunnel `127.0.0.1:18090`)
-
----
-
-
-
-**A local-first RAG system that turns MBBS exam question banks into beautifully formatted, exam-ready answer PDFs.**
-
-MedRack ingests medical textbooks (e.g. *Park's Preventive & Social Medicine*) into a vector knowledge base, extracts questions from exam-bank PDFs, retrieves the relevant textbook context for each question, and uses an LLM to write structured, exam-style answers — complete with section headings, bullet points, comparison **tables**, and **flowchart diagrams** — rendered into a polished, print-ready PDF.
-
-It runs entirely on your own hardware. The LLM can be a free cloud model (Google Gemini) or a fully local model served with llama.cpp (e.g. Qwen/Qwopus 30B-A3B on a consumer GPU) — no data leaves your machines.
-
-> **License:** Proprietary. All rights reserved. See [`LICENSE`](./LICENSE).
 
 ---
 
