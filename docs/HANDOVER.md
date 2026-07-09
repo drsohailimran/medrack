@@ -22,12 +22,23 @@ MedRack is a **local-first RAG system** that turns MBBS exam question banks into
 | **Windows GPU PC** | Sohail’s desktop | `192.168.29.89` | Qwopus **8080**, OCR agent **8090** |
 | SSH user (Ubuntu) | `sohail` | | Key-based login from Windows |
 
-**Firewall reality:** Ubuntu often **cannot** open Windows `:8090` directly. Hybrid OCR uses an **SSH reverse tunnel**:
+**Permanent LAN link (v1.2+):** Ubuntu ↔ Windows is kept up by Windows scheduled tasks + dual-path OCR discovery.
 
+| Path | URL | Role |
+|------|-----|------|
+| **Primary (direct LAN)** | `http://192.168.29.89:8090` | Ubuntu → Windows OCR agent |
+| **Backup (SSH reverse tunnel)** | `http://127.0.0.1:18090` on Ubuntu | Windows `ssh -R 18090:127.0.0.1:8090` |
+| **Model** | `http://192.168.29.89:8080` | Ubuntu → Qwopus |
+
+Install once (if not already): double-click `C:\Medrack\launcher\INSTALL-PERMANENT-LINK.cmd` (admin) **or** user tasks already registered as `MedRack OCR Agent`, `MedRack OCR Tunnel`, `MedRack Link Watchdog`.
+
+Ubuntu env:
 ```
-Windows ssh -R 18090:127.0.0.1:8090 sohail@192.168.29.82
-Ubuntu MEDRACK_OCR_AGENT_URL=http://127.0.0.1:18090
+MEDRACK_OCR_AGENT_URL=http://192.168.29.89:8090
+MEDRACK_OCR_AGENT_URLS=http://192.168.29.89:8090,http://127.0.0.1:18090
+MEDRACK_LLM_BASE_URL=http://192.168.29.89:8080
 ```
+API probes URLs in order and uses the first healthy agent.
 
 ---
 
@@ -306,8 +317,9 @@ cd C:\Medrack\ocr
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | UI loads but API fails | Wrong baked `VITE_MEDRACK_API_BASE` | Rebuild frontend with correct LAN URL |
-| Hybrid stuck / agent down | OCR agent not running | Start MedRack or `C:\Medrack\ocr\START-OCR-AGENT.cmd` |
-| Agent up, Ubuntu can’t reach | Tunnel down | Start MedRack or `launcher\start-ocr-tunnel.cmd`; check `ss -tln \| grep 18090` |
+| Hybrid stuck / agent down | OCR agent not running | Start task `MedRack OCR Agent` or Start MedRack; check `http://192.168.29.89:8090/v1/health` |
+| Agent up, Ubuntu can’t reach | Firewall / wrong IP | Confirm Windows LAN IP in config; allow TCP 8090; fallback tunnel `18090` |
+| Tunnel only path fails | Tunnel task stopped | `Start-ScheduledTask 'MedRack OCR Tunnel'`; watchdog restarts every 5 min |
 | Empty reply on tunnel | Agent crashed mid-request | Restart agent; ensure only one agent on 8090 |
 | Model offline in top bar | Qwopus not on 8080 | Start MedRack / scheduled task; check `C:\ai models` bat |
 | Answers invent schemes | Dirty KB or old cache | Hybrid re-ingest; delete answers cache; check validator |

@@ -109,47 +109,51 @@ try {
         Set-Status 'Model ready.'
     }
 
-    # ===== 1b. OCR agent on this PC (hybrid book ingest) =====
-    # Runs in background so Books â†’ Hybrid OCR can stop the model, OCR,
-    # validate, and restart the model without a separate manual window.
-    if ($cfg.OcrAgentPort -and (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800)) {
-        Set-Status 'OCR agent already running.'
-    } elseif ($cfg.OcrAgentPython -and (Test-Path $cfg.OcrAgentPython) -and (Test-Path $cfg.OcrAgentScript)) {
-        Set-Status 'Starting OCR agent (for hybrid book ingest)...'
-        if ($cfg.OcrAgentStopFlag -and (Test-Path $cfg.OcrAgentStopFlag)) {
-            try { Remove-Item $cfg.OcrAgentStopFlag -Force } catch {}
-        }
-        # Detached console window so the agent survives after this script exits
+    # ===== 1b. Permanent LAN link (OCR agent + tunnel backup) =====
+    # Prefer scheduled tasks (INSTALL-PERMANENT-LINK.cmd). Fallback to direct start.
+    Set-Status 'Ensuring permanent Ubuntu link (OCR)...'
+    if ($cfg.OcrAgentStopFlag -and (Test-Path $cfg.OcrAgentStopFlag)) {
+        try { Remove-Item $cfg.OcrAgentStopFlag -Force } catch {}
+    }
+    $agentTask = $cfg.OcrAgentTaskName
+    if ($agentTask) {
+        try { Start-ScheduledTask -TaskName $agentTask -ErrorAction SilentlyContinue } catch {}
+    }
+    if (-not (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800)) {
         $startCmd = Join-Path $cfg.OcrAgentDir 'START-OCR-AGENT.cmd'
         if (Test-Path $startCmd) {
             Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Agent`" /MIN `"$startCmd`"" -WindowStyle Hidden
-        } else {
-            $ocrCmd = 'set PYTHONPATH={0}& set MEDRACK_API_BASE=http://{1}:8010/api/v1& set MEDRACK_OCR_TOKEN=medrack-ocr& set MEDRACK_OCR_PULL=1& "{2}" "{3}"' -f `
-                $cfg.OcrAgentDir, $cfg.LinuxHost, $cfg.OcrAgentPython, $cfg.OcrAgentScript
-            Start-Process 'cmd.exe' -ArgumentList '/c', $ocrCmd -WorkingDirectory $cfg.OcrAgentDir -WindowStyle Minimized
         }
         $null = Wait-Until { Test-Port '127.0.0.1' $cfg.OcrAgentPort 800 } 30 'Starting OCR agent...'
-        if (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800) {
-            Set-Status 'OCR agent ready.'
-        } else {
-            Set-Status 'OCR agent still starting (hybrid ingest may need a moment)...'
-        }
+    }
+    if (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800) {
+        Set-Status 'OCR agent ready (LAN).'
+    } else {
+        Set-Status 'OCR agent still starting...'
     }
 
-    # ===== 1c. SSH reverse tunnel: Linux:18090 -> this PC:8090 =====
-    # Windows Firewall often blocks Ubuntuâ†’Windows:8090 even with an allow rule.
-    # Tunneling through the existing SSH path (Windowsâ†’Ubuntu) always works.
+    # Tunnel backup (Ubuntu 127.0.0.1:18090 → this PC :8090)
     if ($cfg.OcrTunnelRemotePort -and (Test-Path $cfg.SshKey)) {
-        Set-Status 'Opening OCR tunnel to the server...'
-        # Kill any old tunnel on the same remote port (best effort)
+        $tunTask = $cfg.OcrTunnelTaskName
+        if ($tunTask) {
+            try { Start-ScheduledTask -TaskName $tunTask -ErrorAction SilentlyContinue } catch {}
+        }
+        $tunAlive = $false
         Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -and $_.CommandLine -like "*$($cfg.OcrTunnelRemotePort):127.0.0.1:$($cfg.OcrAgentPort)*" } |
-            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
-        $tunArgs = '-i "{0}" -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -R {1}:127.0.0.1:{2} {3}@{4}' -f `
-            $cfg.SshKey, $cfg.OcrTunnelRemotePort, $cfg.OcrAgentPort, $cfg.LinuxUser, $cfg.LinuxHost
-        Start-Process 'ssh' -ArgumentList $tunArgs -WindowStyle Hidden
-        Start-Sleep -Milliseconds 800
-        Set-Status 'OCR tunnel ready.'
+            ForEach-Object { $tunAlive = $true }
+        if (-not $tunAlive) {
+            $tunCmd = Join-Path $PSScriptRoot 'start-ocr-tunnel.cmd'
+            if (Test-Path $tunCmd) {
+                Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Tunnel`" /MIN `"$tunCmd`"" -WindowStyle Hidden
+            } else {
+                $tunArgs = '-i "{0}" -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -R {1}:127.0.0.1:{2} {3}@{4}' -f `
+                    $cfg.SshKey, $cfg.OcrTunnelRemotePort, $cfg.OcrAgentPort, $cfg.LinuxUser, $cfg.LinuxHost
+                Start-Process 'ssh' -ArgumentList $tunArgs -WindowStyle Hidden
+            }
+            Start-Sleep -Milliseconds 1200
+        }
+        Set-Status 'LAN link ready (direct + tunnel backup).'
     }
 
     # ===== 2. MedRack on the Linux box =====

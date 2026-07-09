@@ -170,13 +170,49 @@ def run_ingest_book(
     }
 
 
-def _ocr_agent_url() -> str:
+def _ocr_agent_urls() -> list:
+    """Candidate OCR agent base URLs (LAN first, tunnel backup).
+
+    Env:
+      MEDRACK_OCR_AGENT_URL   — preferred primary
+      MEDRACK_OCR_AGENT_URLS  — optional comma-separated extras
+    Defaults always include Windows LAN :8090 and Ubuntu tunnel :18090.
+    """
     import os
 
-    return (
-        os.environ.get("MEDRACK_OCR_AGENT_URL")
-        or "http://192.168.29.89:8090"
-    ).rstrip("/")
+    urls: list[str] = []
+    primary = (os.environ.get("MEDRACK_OCR_AGENT_URL") or "").strip().rstrip("/")
+    if primary:
+        urls.append(primary)
+    extra = (os.environ.get("MEDRACK_OCR_AGENT_URLS") or "").strip()
+    if extra:
+        for part in extra.split(","):
+            u = part.strip().rstrip("/")
+            if u and u not in urls:
+                urls.append(u)
+    for u in (
+        "http://192.168.29.89:8090",
+        "http://127.0.0.1:18090",
+    ):
+        if u not in urls:
+            urls.append(u)
+    return urls
+
+
+def _ocr_agent_url() -> str:
+    """Return first reachable OCR agent URL, else the primary candidate."""
+    import httpx
+
+    candidates = _ocr_agent_urls()
+    for base in candidates:
+        try:
+            with httpx.Client(timeout=2.5) as client:
+                r = client.get(f"{base}/v1/health")
+                if r.status_code == 200:
+                    return base
+        except Exception:  # noqa: BLE001
+            continue
+    return candidates[0] if candidates else "http://192.168.29.89:8090"
 
 
 def run_hybrid_ingest_book(
@@ -212,12 +248,16 @@ def run_hybrid_ingest_book(
     clean_bytes: Optional[bytes] = None
 
     # ---- Prefer push (agent started by Start MedRack) ----
-    progress(1, "Contacting Windows OCR agent (integrated with Start MedRack)…")
+    progress(1, "Finding Windows OCR agent (LAN :8090, then tunnel :18090)…")
     agent_up = False
+    # Re-resolve so health probe uses the same URL we will push to
+    agent = _ocr_agent_url()
     try:
         with httpx.Client(timeout=5.0) as client:
             hr = client.get(f"{agent}/v1/health")
             agent_up = hr.status_code == 200
+            if agent_up:
+                progress(1.5, f"OCR agent online at {agent}")
     except Exception:  # noqa: BLE001
         agent_up = False
 

@@ -26,33 +26,38 @@ if ($proc) {
 # Give the watchdog a moment to see the flag and exit its loop.
 Start-Sleep -Milliseconds 800
 
-# ---- 1b. Stop OCR agent + reverse tunnel ----
-if ($cfg.OcrAgentStopFlag) {
-    try { New-Item -ItemType File -Path $cfg.OcrAgentStopFlag -Force | Out-Null } catch {}
-}
-try {
-    $conns = Get-NetTCPConnection -LocalPort $cfg.OcrAgentPort -State Listen -ErrorAction SilentlyContinue
-    foreach ($c in $conns) {
-        if ($c.OwningProcess) {
-            Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
-            $stopped += 'OCR agent (this PC)'
+# ---- 1b. Permanent LAN link (OCR agent + tunnel) ----
+# By default we KEEP them running so Ubuntu never loses the Windows OCR path.
+# Only tear them down if KeepLinkOnStop is explicitly $false.
+if ($cfg.KeepLinkOnStop -eq $false) {
+    if ($cfg.OcrAgentStopFlag) {
+        try { New-Item -ItemType File -Path $cfg.OcrAgentStopFlag -Force | Out-Null } catch {}
+    }
+    try {
+        $conns = Get-NetTCPConnection -LocalPort $cfg.OcrAgentPort -State Listen -ErrorAction SilentlyContinue
+        foreach ($c in $conns) {
+            if ($c.OwningProcess) {
+                Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+                $stopped += 'OCR agent (this PC)'
+            }
         }
-    }
-} catch {}
-# Kill OCR SSH reverse tunnels
-Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.CommandLine -and (
-            $_.CommandLine -like "*$($cfg.OcrTunnelRemotePort):127.0.0.1:$($cfg.OcrAgentPort)*" -or
-            $_.CommandLine -like "*-R $($cfg.OcrTunnelRemotePort):*"
-        )
-    } |
-    ForEach-Object {
-        try {
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            $stopped += 'OCR tunnel'
-        } catch {}
-    }
+    } catch {}
+    Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and (
+                $_.CommandLine -like "*$($cfg.OcrTunnelRemotePort):127.0.0.1:$($cfg.OcrAgentPort)*" -or
+                $_.CommandLine -like "*-R $($cfg.OcrTunnelRemotePort):*"
+            )
+        } |
+        ForEach-Object {
+            try {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                $stopped += 'OCR tunnel'
+            } catch {}
+        }
+} else {
+    $stopped += 'LAN link kept (OCR agent + tunnel stay up)'
+}
 
 # ---- 2. Best-effort stop MedRack on the Linux box ----
 # Leaving MedRack running is harmless (it's lightweight), so this is

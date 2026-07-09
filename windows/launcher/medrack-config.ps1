@@ -1,4 +1,4 @@
-﻿# MedRack launcher - shared configuration.
+# MedRack launcher - shared configuration.
 # Edit these values if your network/paths ever change.
 # Dot-sourced by medrack-launcher.ps1, medrack-stop.ps1 and setup-medrack-launcher.ps1.
 
@@ -10,6 +10,9 @@ $MedrackConfig = @{
     # Canonical Ubuntu stack (single workspace after 2026-07-09 consolidation)
     RemoteStart     = 'bash /home/sohail/medrack/start_stack.sh'
     RemoteStop      = 'bash /home/sohail/medrack/stop_stack.sh'
+
+    # --- This Windows PC (LAN IP Ubuntu uses for direct model + OCR) ---
+    WindowsLanHost  = '192.168.29.89'
 
     # --- Qwopus model on THIS Windows PC ---
     ModelPort       = 8080
@@ -27,15 +30,19 @@ $MedrackConfig = @{
     ModelWaitSec    = 300           # 21GB model can take a while to load
     FrontendWaitSec = 120
 
-    # --- Windows OCR agent (P1 hybrid book ingest â€” started with MedRack) ---
+    # --- Windows OCR agent (permanent LAN + tunnel backup) ---
     OcrAgentPort    = 8090
     OcrAgentDir     = 'C:\Medrack\ocr'
     OcrAgentPython  = 'C:\Medrack\ocr\venv\Scripts\python.exe'
     OcrAgentScript  = 'C:\Medrack\ocr\ocr_agent_server.py'
     OcrAgentStopFlag = 'C:\Medrack\ocr\ocr-agent.stop'
-    # Ubuntu often cannot open Windows:8090 (firewall). Tunnel agent to Linux:
-    #   Linux localhost:18090 -> this PC :8090
+    # Primary: Ubuntu -> http://WindowsLanHost:8090 (direct LAN)
+    # Backup:  SSH reverse tunnel Windows -> Ubuntu 127.0.0.1:18090
     OcrTunnelRemotePort = 18090
-    # Ubuntu .env should use: MEDRACK_OCR_AGENT_URL=http://127.0.0.1:18090
+    # Permanent scheduled tasks (install via INSTALL-PERMANENT-LINK.cmd)
+    OcrAgentTaskName     = 'MedRack OCR Agent'
+    OcrTunnelTaskName    = 'MedRack OCR Tunnel'
+    LinkWatchdogTaskName = 'MedRack Link Watchdog'
+    # Stop MedRack leaves OCR agent + tunnel running (permanent link)
+    KeepLinkOnStop       = $true
 }
-
