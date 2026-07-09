@@ -11,8 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as QuestionBanksRouteImport } from './routes/question-banks'
+import { Route as ProjectsRouteImport } from './routes/projects'
+import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as LogsRouteImport } from './routes/logs'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as BooksRouteImport } from './routes/books'
+import { Route as BenchmarksRouteImport } from './routes/benchmarks'
 import { Route as AnswersRouteImport } from './routes/answers'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -26,14 +30,34 @@ const QuestionBanksRoute = QuestionBanksRouteImport.update({
   path: '/question-banks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsRoute = ProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PipelineRoute = PipelineRouteImport.update({
+  id: '/pipeline',
+  path: '/pipeline',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LogsRoute = LogsRouteImport.update({
   id: '/logs',
   path: '/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BooksRoute = BooksRouteImport.update({
   id: '/books',
   path: '/books',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BenchmarksRoute = BenchmarksRouteImport.update({
+  id: '/benchmarks',
+  path: '/benchmarks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AnswersRoute = AnswersRouteImport.update({
@@ -50,16 +74,24 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/answers': typeof AnswersRoute
+  '/benchmarks': typeof BenchmarksRoute
   '/books': typeof BooksRoute
+  '/history': typeof HistoryRoute
   '/logs': typeof LogsRoute
+  '/pipeline': typeof PipelineRoute
+  '/projects': typeof ProjectsRoute
   '/question-banks': typeof QuestionBanksRoute
   '/settings': typeof SettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/answers': typeof AnswersRoute
+  '/benchmarks': typeof BenchmarksRoute
   '/books': typeof BooksRoute
+  '/history': typeof HistoryRoute
   '/logs': typeof LogsRoute
+  '/pipeline': typeof PipelineRoute
+  '/projects': typeof ProjectsRoute
   '/question-banks': typeof QuestionBanksRoute
   '/settings': typeof SettingsRoute
 }
@@ -67,23 +99,50 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/answers': typeof AnswersRoute
+  '/benchmarks': typeof BenchmarksRoute
   '/books': typeof BooksRoute
+  '/history': typeof HistoryRoute
   '/logs': typeof LogsRoute
+  '/pipeline': typeof PipelineRoute
+  '/projects': typeof ProjectsRoute
   '/question-banks': typeof QuestionBanksRoute
   '/settings': typeof SettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/answers' | '/books' | '/logs' | '/question-banks' | '/settings'
+    | '/'
+    | '/answers'
+    | '/benchmarks'
+    | '/books'
+    | '/history'
+    | '/logs'
+    | '/pipeline'
+    | '/projects'
+    | '/question-banks'
+    | '/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/answers' | '/books' | '/logs' | '/question-banks' | '/settings'
+  to:
+    | '/'
+    | '/answers'
+    | '/benchmarks'
+    | '/books'
+    | '/history'
+    | '/logs'
+    | '/pipeline'
+    | '/projects'
+    | '/question-banks'
+    | '/settings'
   id:
     | '__root__'
     | '/'
     | '/answers'
+    | '/benchmarks'
     | '/books'
+    | '/history'
     | '/logs'
+    | '/pipeline'
+    | '/projects'
     | '/question-banks'
     | '/settings'
   fileRoutesById: FileRoutesById
@@ -91,8 +150,12 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnswersRoute: typeof AnswersRoute
+  BenchmarksRoute: typeof BenchmarksRoute
   BooksRoute: typeof BooksRoute
+  HistoryRoute: typeof HistoryRoute
   LogsRoute: typeof LogsRoute
+  PipelineRoute: typeof PipelineRoute
+  ProjectsRoute: typeof ProjectsRoute
   QuestionBanksRoute: typeof QuestionBanksRoute
   SettingsRoute: typeof SettingsRoute
 }
@@ -113,6 +176,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QuestionBanksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects': {
+      id: '/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pipeline': {
+      id: '/pipeline'
+      path: '/pipeline'
+      fullPath: '/pipeline'
+      preLoaderRoute: typeof PipelineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/logs': {
       id: '/logs'
       path: '/logs'
@@ -120,11 +197,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LogsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/books': {
       id: '/books'
       path: '/books'
       fullPath: '/books'
       preLoaderRoute: typeof BooksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/benchmarks': {
+      id: '/benchmarks'
+      path: '/benchmarks'
+      fullPath: '/benchmarks'
+      preLoaderRoute: typeof BenchmarksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/answers': {
@@ -147,8 +238,12 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnswersRoute: AnswersRoute,
+  BenchmarksRoute: BenchmarksRoute,
   BooksRoute: BooksRoute,
+  HistoryRoute: HistoryRoute,
   LogsRoute: LogsRoute,
+  PipelineRoute: PipelineRoute,
+  ProjectsRoute: ProjectsRoute,
   QuestionBanksRoute: QuestionBanksRoute,
   SettingsRoute: SettingsRoute,
 }

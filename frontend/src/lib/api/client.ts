@@ -34,11 +34,14 @@ import type {
   Subject,
   ValidationReport,
   VersionInfo,
+  LlmStatus,
 } from "./types";
 
 export interface MedRackApi {
   // Version / health
   getVersion(): Promise<VersionInfo>;
+  /** P3: live LLM indicator (model + endpoint + online). */
+  getLlmStatus(): Promise<LlmStatus>;
 
   // Library
   listBooks(): Promise<BookInfo[]>;
@@ -59,6 +62,10 @@ export interface MedRackApi {
     subject: Subject;
     title: string;
     replace?: boolean;
+    /** P1: Windows hybrid OCR (stop model → RapidOCR → clean PDF → reindex) */
+    hybrid_ocr?: boolean;
+    /** Optional Marker table pass (slower; needs GPU free after model stop) */
+    use_marker?: boolean;
   }): Promise<JobHandle>;
   // Upload a question-bank PDF. Extraction is async; returns a job to poll.
   uploadQuestionBank(args: {
@@ -74,6 +81,14 @@ export interface MedRackApi {
 
   // Jobs (async progress for ingest / extract / solve)
   getJob(job_id: string): Promise<JobStatus>;
+  /** P3: cooperative cancel — stops after the current question. */
+  cancelJob(job_id: string): Promise<{
+    ok: boolean;
+    job_id: string;
+    status: string;
+    cancel_requested: boolean;
+    message?: string;
+  }>;
   jobPdfUrl(job_id: string): string;
 
   // Solve a whole question bank into one PDF (the "approve" action).
@@ -161,6 +176,19 @@ export const mockApi: MedRackApi = {
     await sleep(120);
     return mock.versionInfo;
   },
+  async getLlmStatus() {
+    await sleep(80);
+    return {
+      schema_version: 1 as const,
+      mode: "mock",
+      provider: "mock",
+      model: "mock",
+      base_url: "",
+      online: true,
+      detail: "mock client",
+      latency_ms: 1,
+    };
+  },
 
   async listBooks() {
     await sleep(jitter(140, 260));
@@ -218,6 +246,16 @@ export const mockApi: MedRackApi = {
   async deleteBank(name) {
     await sleep(120);
     return { ok: true, name };
+  },
+  async cancelJob(job_id) {
+    await sleep(80);
+    return {
+      ok: true,
+      job_id,
+      status: "cancelled",
+      cancel_requested: true,
+      message: "Mock cancel",
+    };
   },
   async getJob(job_id) {
     await sleep(120);
@@ -375,6 +413,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const httpApi: MedRackApi = {
   getVersion: () => http("/version"),
+  getLlmStatus: () => http("/llm/status"),
   listBooks: () => http("/library/books"),
   addBook: ({ pdf_path, subject, book_title }) => {
     const q = new URLSearchParams({ pdf_path, subject, ...(book_title ? { book_title } : {}) });
@@ -427,12 +466,21 @@ export const httpApi: MedRackApi = {
   tailLog: (name, n = 100) => http(`/logs/${name}?n=${n}`),
   searchLog: (name, query, n = 100) =>
     http(`/logs/${name}/search?query=${encodeURIComponent(query)}&n=${n}`),
-  uploadBook: async ({ file, subject, title, replace = false }) => {
+  uploadBook: async ({
+    file,
+    subject,
+    title,
+    replace = false,
+    hybrid_ocr = false,
+    use_marker = false,
+  }) => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("subject", subject);
     fd.append("title", title);
     fd.append("replace", String(replace));
+    fd.append("hybrid_ocr", String(hybrid_ocr));
+    fd.append("use_marker", String(use_marker));
     const res = await fetch(`${BASE}/library/books/upload`, { method: "POST", body: fd });
     if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
     return (await res.json()) as JobHandle;
@@ -452,6 +500,7 @@ export const httpApi: MedRackApi = {
   deleteBank: (name) =>
     http(`/library/question-banks/${encodeURIComponent(name)}`, { method: "DELETE" }),
   getJob: (id) => http(`/jobs/${id}`),
+  cancelJob: (id) => http(`/jobs/${id}/cancel`, { method: "POST" }),
   jobPdfUrl: (id) => `${BASE}/jobs/${id}/pdf`,
   solveBank: ({ name, subject, book_id, marks = 10, words_3, words_5, words_10, marks_filter, chapters }) =>
     http("/banks/solve", {

@@ -85,6 +85,7 @@ class Rule(ABC):
         self,
         answer: str,
         blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> ValidationResult:
         """Run the rule. Return a :class:`ValidationResult`.
 
@@ -95,6 +96,10 @@ class Rule(ABC):
         blueprint:
             Optional blueprint (duck-typed; any object with
             ``.sections`` and ``.target_word_count``). Read-only.
+        context:
+            Optional generation context (P0): may include
+            ``source_text``, ``question_text``, ``marks``,
+            ``subject``. Read-only.
 
         Returns
         -------
@@ -191,7 +196,12 @@ class WordCountRule(Rule):
             )
         self.tolerance = tolerance
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         if blueprint is None or not hasattr(blueprint, "sections"):
             return ValidationResult(
                 rule_name=self.name,
@@ -247,7 +257,12 @@ class RequiredSectionsRule(Rule):
 
     name = "RequiredSectionsRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         if blueprint is None or not hasattr(blueprint, "sections"):
             return ValidationResult(
                 rule_name=self.name,
@@ -298,7 +313,12 @@ class BlueprintComplianceRule(Rule):
 
     name = "BlueprintComplianceRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         if blueprint is None or not hasattr(blueprint, "sections"):
             return ValidationResult(
                 rule_name=self.name,
@@ -343,7 +363,12 @@ class DuplicateSectionRule(Rule):
 
     name = "DuplicateSectionRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         sections = _split_into_sections(answer)
         seen: Dict[str, int] = {}
         for s in sections:
@@ -381,7 +406,12 @@ class HeadingStructureRule(Rule):
 
     name = "HeadingStructureRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         sections = _split_into_sections(answer)
         if not sections:
             return ValidationResult(
@@ -418,7 +448,12 @@ class EvidenceCoverageRule(Rule):
     # Pattern: a chunk reference looks like [chunk_id] or (chunk_id)
     CHUNK_REF_RE = re.compile(r"\b(?:chunk[_-]?)?([A-Za-z0-9]{6,16})\b")
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         if blueprint is None or not hasattr(blueprint, "required_metadata_categories"):
             return ValidationResult(
                 rule_name=self.name,
@@ -463,7 +498,12 @@ class FormattingRule(Rule):
 
     name = "FormattingRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         issues: List[str] = []
         if not answer or not answer.strip():
             return ValidationResult(
@@ -505,7 +545,12 @@ class EmptySectionRule(Rule):
 
     name = "EmptySectionRule"
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         sections = _split_into_sections(answer)
         empty: List[str] = []
         empty_sections: List[Dict[str, Any]] = []
@@ -549,7 +594,12 @@ class ReferenceConsistencyRule(Rule):
     # The same regex as EvidenceCoverageRule
     CHUNK_REF_RE = re.compile(r"\b(?:chunk[_-]?)?([A-Za-z0-9]{6,16})\b")
 
-    def check(self, answer: str, blueprint: Optional[Any] = None) -> ValidationResult:
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
         sections = _split_into_sections(answer)
         offending: List[Dict[str, Any]] = []
         for s in sections:
@@ -578,6 +628,373 @@ class ReferenceConsistencyRule(Rule):
         )
 
 
+# ----------------------------------------------------------------------
+# P0 quality gates (scope + grounding + truncation)
+# ----------------------------------------------------------------------
+
+# Hard length bands by marks (words). Used when context has no target_word_count.
+# Min catches half-length 10-mark answers; max catches 5-mark mini-textbooks.
+_SCOPE_MIN_WORDS = {
+    3: 80,
+    5: 250,   # P0.3: floor when no target; with target 5-mark uses ~0.68×target
+    10: 550,
+}
+_SCOPE_MAX_WORDS = {
+    3: 200,
+    5: 410,   # P0.3: slightly tighter hard max for 5-mark
+    10: 850,  # P0.4: 10-mark hard max (was 900); target 750 → +15% = 862, min of these
+}
+
+# Acronyms / tokens that are safe even if not in the retrieved chunk text.
+_GROUNDING_ALLOWLIST: Set[str] = {
+    "WHO", "UNICEF", "UNFPA", "UNDP", "UNESCO", "WORLD", "BANK",
+    "NHM", "NRHM", "NUHM", "MOHFW", "ICMR", "NITI", "AYOG", "GOI", "RGI",
+    "SRS", "NFHS", "HMIS", "IDSP", "NCD", "UHC", "SDG", "MDG",
+    "IMR", "NMR", "MMR", "TFR", "CBR", "CDR", "GDP", "HDI", "PQLI",
+    "DALY", "QALY", "BMI", "ANC", "PNC", "IFA", "ORS", "IMNCI", "FIMNCI",
+    "FRU", "SNCU", "NRC", "PHC", "CHC", "SC", "SDH", "DH",
+    "ASHA", "ANM", "AWW", "AWW", "MPW",
+    "JSY", "JSSK", "PMSMA", "RKSK", "RBSK", "PMJAY", "ABHA", "AYUSHMAN",
+    "RCH", "RMNCH", "RMNCHA", "NSSK", "HBNC", "HBYC",
+    "NTEP", "RNTCP", "NACP", "NVBDCP", "NPCB", "NPCDCS", "NMHP",
+    "DOTS", "BCG", "OPV", "IPV", "MMR", "TT", "Td", "DPT", "PENTA",
+    "HIV", "AIDS", "TB", "MDR", "XDR", "COVID", "SARS", "MERS",
+    "ESI", "CGHS", "ESIC", "AIIMS", "NEET", "MBBS", "MD", "MS",
+    "CPR", "BLS", "ACLS", "ICD", "DSM", "OR", "CI", "RR", "SD", "SE", "SES",
+    "LHV", "VHND", "VHSNC", "RKS", "JAS", "HWC", "ABHWC",
+    # Common obstetric / RCH expansions (not fabrications)
+    "EOC", "BEmOC", "CEmOC", "EmOC", "BEMOC", "CEMOC", "EMOC",
+    "ARSH", "AFHC", "WIFS", "SBA", "MHM", "MCTS", "RCHII", "RCH",
+    "LSAS", "NBCC", "NBSU", "KMC", "LBW", "IUGR", "PIH", "GDM", "PPROM",
+    "MTP", "PPIUCD", "IUCD", "OCP", "DMPA", "RTI", "STI", "PPTCT", "PMTCT",
+    "RPR", "VDRL", "Hb", "BP", "BMI", "EDD", "LMP", "FHS", "NST",
+    "PROM", "PPROM", "SGA", "AGA", "VBAC", "CS", "LSCS",
+    # Common maternity / NHM scheme acronyms (real; may not be in retrieved chunk)
+    "PMMVY", "SUMAN", "LAQSHYA", "PMSMA", "JSSK", "JSY", "MCTS", "RBSK",
+    "PPP", "NGO", "NGOS", "WASH", "IMNCI", "IMCI", "PMTCT", "PPTCT",
+    "ART", "ARV", "VHND", "MCP", "ANMOL", "UIP",
+}
+
+# Full scheme titles (lowercase) that are known real Indian programmes —
+# do not FAIL when retrieval chunk text omitted the full name.
+_KNOWN_SCHEME_TITLES: Set[str] = {
+    "pradhan mantri matru vandana yojana",
+    "janani suraksha yojana",
+    "janani shishu suraksha karyakram",
+    "janani shishu suraksha karvakram",  # common misspelling in model output
+    "rashtriya kishor swasthya karyakram",
+    "rashtriya bal swasthya karyakram",
+    "pradhan mantri jan arogya yojana",
+    "ayushman bharat scheme",
+    "ayushman bharat programme",
+    "ayushman bharat mission",
+    "national health mission",
+    "national rural health mission",
+    "national urban health mission",
+    "reproductive and child health programme",
+    "universal immunization programme",
+    "school health and wellness programme",
+    "menstrual hygiene scheme",
+    "menstrual hygiene mission",
+    "surakshit matritva ashashwasan",
+    "labour room quality improvement initiative",
+    "pradhan mantri surakshit matritva abhiyan",
+}
+
+
+def _norm_title(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+# Never acceptable in Indian MBBS exam answers (foreign programmes / systems).
+_FOREIGN_CONTEXT_DENYLIST: Set[str] = {
+    "PRAMS", "MEDICAID", "MEDICARE", "OBAMACARE", "CHIP", "HIPAA",
+    "NHS",  # UK system — not Indian exam default
+}
+
+
+class ScopeLengthRule(Rule):
+    """Fail answers outside a mark-appropriate length band.
+
+    Uses ``context["marks"]`` and optional ``context["target_word_count"]``.
+    Without marks, WARN only.
+
+    - Over max → scope creep / mini-textbook (esp. 5-mark).
+    - Under min → half-length 10-mark answers that fail exam expectations.
+    """
+
+    name = "ScopeLengthRule"
+
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
+        ctx = context or {}
+        marks = ctx.get("marks")
+        words = _word_count(answer)
+        if marks is None:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.WARN,
+                message="ScopeLengthRule has no marks in context; skipping hard check",
+                details={"words": words},
+            )
+        try:
+            marks_i = int(marks)
+        except (TypeError, ValueError):
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.WARN,
+                message=f"Invalid marks value: {marks!r}",
+                details={"words": words},
+            )
+        # Map unknown marks to nearest band
+        if marks_i <= 3:
+            band = 3
+        elif marks_i <= 5:
+            band = 5
+        else:
+            band = 10
+
+        min_words = _SCOPE_MIN_WORDS[band]
+        max_words = _SCOPE_MAX_WORDS[band]
+        # Prefer bands derived from the actual target the LLM was given.
+        tgt = ctx.get("target_word_count")
+        if tgt is not None:
+            try:
+                tgt_i = int(tgt)
+                if tgt_i > 0:
+                    # P0.3 band vs target:
+                    # 10-mark: min 75% / max +15% (need full depth)
+                    # 5-mark:  min 68% / max +8%  (compact; 262-word Q3 should pass)
+                    # 3-mark:  min 70% / max +10%
+                    if band == 10:
+                        min_words = max(min_words, int(tgt_i * 0.75))
+                        # P0.4: tighter 10-mark ceiling (+12%, not +15%)
+                        tgt_max = int(tgt_i * 1.12)  # 750 → 840
+                    elif band == 5:
+                        min_words = max(min_words, int(tgt_i * 0.68))  # 375 → 255
+                        tgt_max = int(tgt_i * 1.08)  # 375 → 405
+                    else:
+                        min_words = max(min_words, int(tgt_i * 0.70))
+                        tgt_max = int(tgt_i * 1.10)
+                    max_words = min(max_words, tgt_max)
+                    # Keep min < max
+                    if min_words >= max_words:
+                        min_words = int(max_words * 0.7)
+            except (TypeError, ValueError):
+                pass
+
+        if words > max_words:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message=(
+                    f"Answer is over-long for {marks_i}-mark question "
+                    f"({words} words > {max_words} max) — likely scope creep"
+                ),
+                details={
+                    "marks": marks_i,
+                    "words": words,
+                    "min_words": min_words,
+                    "max_words": max_words,
+                },
+            )
+        if words < min_words:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message=(
+                    f"Answer is under-length for {marks_i}-mark question "
+                    f"({words} words < {min_words} min) — expand on-topic content"
+                ),
+                details={
+                    "marks": marks_i,
+                    "words": words,
+                    "min_words": min_words,
+                    "max_words": max_words,
+                },
+            )
+        return ValidationResult(
+            rule_name=self.name,
+            severity=Severity.PASS,
+            message=(
+                f"Length OK for {marks_i}-mark "
+                f"({min_words} ≤ {words} ≤ {max_words})"
+            ),
+            details={
+                "marks": marks_i,
+                "words": words,
+                "min_words": min_words,
+                "max_words": max_words,
+            },
+        )
+
+
+class GroundingRule(Rule):
+    """Fail answers that name unsupported / foreign programmes.
+
+    Heuristics (P0, deterministic):
+      1. Foreign-context denylist (PRAMS, Medicaid, …) → always FAIL.
+      2. All-caps acronyms (3–8 letters) in the answer that are not in
+         the allowlist and not present in ``context["source_text"]`` → FAIL.
+      3. ``… Yojana/Scheme/Programme/Mission`` titles not present in
+         source text → FAIL.
+
+    Without source text, only the denylist is enforced (hard FAIL);
+    other checks WARN.
+    """
+
+    name = "GroundingRule"
+
+    ACRONYM_RE = re.compile(r"\b([A-Z]{3,8})\b")
+    SCHEME_TITLE_RE = re.compile(
+        r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}\s+"
+        r"(?:Yojana|Scheme|Programme|Program|Mission))\b"
+    )
+
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
+        if not answer or not answer.strip():
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message="Answer is empty",
+            )
+        ctx = context or {}
+        source = (ctx.get("source_text") or "")
+        source_upper = source.upper()
+        issues: List[Dict[str, str]] = []
+
+        # 1. Hard denylist
+        answer_upper = answer.upper()
+        for token in sorted(_FOREIGN_CONTEXT_DENYLIST):
+            if re.search(rf"\b{re.escape(token)}\b", answer_upper):
+                issues.append({
+                    "token": token,
+                    "reason": "foreign_context_denylist",
+                })
+
+        # 2–3 require source for hard fail; otherwise warn
+        if not source.strip():
+            if issues:
+                return ValidationResult(
+                    rule_name=self.name,
+                    severity=Severity.FAIL,
+                    message=f"{len(issues)} foreign/unsupported name(s)",
+                    details={"issues": issues},
+                )
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.WARN,
+                message="GroundingRule has no source_text; only denylist checked",
+            )
+
+        # 2. Acronyms
+        for acr in sorted(set(self.ACRONYM_RE.findall(answer))):
+            if acr in _GROUNDING_ALLOWLIST:
+                continue
+            if acr in _FOREIGN_CONTEXT_DENYLIST:
+                continue  # already recorded
+            if acr.upper() in source_upper:
+                continue
+            # Skip pure roman-looking short noise that is common in text
+            if acr in {"THE", "AND", "FOR", "WITH", "FROM", "THIS", "THAT", "ARE", "WAS", "NOT"}:
+                continue
+            issues.append({
+                "token": acr,
+                "reason": "acronym_not_in_source",
+            })
+
+        # 3. Scheme titles
+        for title in sorted(set(self.SCHEME_TITLE_RE.findall(answer))):
+            if title.upper() in source_upper:
+                continue
+            # Known real Indian programmes (even if this chunk omitted the name)
+            if _norm_title(title) in _KNOWN_SCHEME_TITLES:
+                continue
+            # Allow if any known title is a substring (wording variants)
+            tnorm = _norm_title(title)
+            if any(k in tnorm or tnorm in k for k in _KNOWN_SCHEME_TITLES):
+                continue
+            # Also allow if the distinctive head words appear in source
+            head = title.split()[0].upper()
+            if head in source_upper and any(
+                k in source_upper for k in ("YOJANA", "SCHEME", "PROGRAMME", "PROGRAM", "MISSION")
+            ):
+                continue
+            issues.append({
+                "token": title,
+                "reason": "scheme_title_not_in_source",
+            })
+
+        if issues:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message=f"{len(issues)} unsupported or foreign name(s) in answer",
+                details={"issues": issues},
+            )
+        return ValidationResult(
+            rule_name=self.name,
+            severity=Severity.PASS,
+            message="No unsupported programme/scheme names detected",
+        )
+
+
+class TruncationRule(Rule):
+    """Fail answers that look truncated mid-thought."""
+
+    name = "TruncationRule"
+
+    def check(
+        self,
+        answer: str,
+        blueprint: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> ValidationResult:
+        text = (answer or "").rstrip()
+        if not text:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message="Answer is empty",
+            )
+        issues: List[str] = []
+        # Unclosed code fence
+        if text.count("```") % 2 == 1:
+            issues.append("unclosed code fence")
+        # Ends with connector / incomplete bullet
+        if re.search(
+            r"(?i)\b(and|or|with|include|includes|including|such as|e\.g\.|i\.e\.)\s*$",
+            text,
+        ):
+            issues.append("ends with connector word")
+        if re.search(r"[•\-–—]\s*$", text):
+            issues.append("ends with empty bullet marker")
+        # Ends mid-word ellipsis spam
+        if text.endswith("...") or text.endswith("…"):
+            issues.append("ends with ellipsis")
+        if issues:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.FAIL,
+                message=f"Answer appears truncated: {', '.join(issues)}",
+                details={"issues": issues},
+            )
+        return ValidationResult(
+            rule_name=self.name,
+            severity=Severity.PASS,
+            message="No truncation markers",
+        )
+
+
 __all__ = [
     "Rule",
     "WordCountRule",
@@ -589,4 +1006,7 @@ __all__ = [
     "FormattingRule",
     "EmptySectionRule",
     "ReferenceConsistencyRule",
+    "ScopeLengthRule",
+    "GroundingRule",
+    "TruncationRule",
 ]

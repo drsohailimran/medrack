@@ -192,25 +192,123 @@ class LibraryService:
                     )
         return list(seen.values())
 
+    def _iter_module_extracted(self) -> List[Path]:
+        """Yield ``modules/<subject>/<name>/extracted.json`` paths."""
+        root = self._home / "modules"
+        if not root.is_dir():
+            return []
+        return sorted(root.rglob("extracted.json"))
+
+    def _load_module_bank(self, extracted_path: Path) -> Optional[Dict[str, Any]]:
+        """Normalize a modules/*/extracted.json into bank-shaped dict."""
+        import json as _json
+
+        try:
+            data = _json.loads(extracted_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(data, dict):
+            return None
+        questions = data.get("questions") or []
+        if not isinstance(questions, list):
+            questions = []
+        name = extracted_path.parent.name
+        # modules/<subject>/<name>/extracted.json
+        subject = extracted_path.parent.parent.name
+        if subject == "modules":
+            subject = (data.get("metadata") or {}).get("subject") or "unknown"
+        meta = data.get("metadata") or {}
+        return {
+            "name": name,
+            "version": meta.get("version") or "module",
+            "subject": meta.get("subject") or subject,
+            "path": str(extracted_path),
+            "questions": questions,
+            "source": "modules",
+            "metadata": meta,
+        }
+
+    def _resolve_bank_path(self, name: str) -> Optional[Path]:
+        """Find bank JSON: regression_datasets first, then modules extracted."""
+        import json as _json
+
+        safe = "".join(c for c in name if c.isalnum() or c in ("-", "_", ".")).strip() or "bank"
+        ds_dir = self._home / "tests" / "regression_datasets"
+        path = ds_dir / f"{safe}.json"
+        if path.is_file():
+            return path
+        if ds_dir.is_dir():
+            for f in ds_dir.glob("*.json"):
+                try:
+                    data = _json.loads(f.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    continue
+                if data.get("name") == name or f.stem == safe:
+                    return f
+        for extracted in self._iter_module_extracted():
+            if extracted.parent.name == safe or extracted.parent.name == name:
+                return extracted
+        return None
+
     def list_question_banks(self) -> List[QuestionBankInfo]:
-        """List all available question banks (regression datasets)."""
-        banks: List[QuestionBankInfo] = []
+        """List question banks from regression datasets **and** modules/.
+
+        Historical CLI ingest wrote ``modules/<subject>/<name>/extracted.json``.
+        The UI previously only listed ``tests/regression_datasets/*.json``, so
+        after answer-cache deletes the banks appeared to vanish even though the
+        modules were still on disk. Both sources are listed (deduped by name;
+        modules win on conflict because they hold the full extracted set).
+        """
+        import json as _json
+
+        by_name: Dict[str, QuestionBankInfo] = {}
         ds_dir = self._home / "tests" / "regression_datasets"
         if ds_dir.exists():
             for f in ds_dir.glob("*.json"):
                 try:
-                    with f.open() as fp:
-                        data = __import__("json").load(fp)
-                    banks.append(QuestionBankInfo(
-                        name=data.get("name", f.stem),
+                    with f.open(encoding="utf-8") as fp:
+                        data = _json.load(fp)
+                    # Skip non-bank datasets (e.g. permanent regression v1 with
+                    # no ``name`` + ``questions`` list of refs only).
+                    questions = data.get("questions")
+                    if not isinstance(questions, list):
+                        continue
+                    # Skip pure reference packs that only point at modules
+                    # without full question text (permanent suite v1.json).
+                    has_text = any(
+                        (q.get("question_text") or q.get("stem") or "").strip()
+                        for q in questions
+                        if isinstance(q, dict)
+                    )
+                    # Keep empty shells listed with count 0 so the user can
+                    # delete/re-upload them; full modules always have text.
+                    if questions and not has_text:
+                        # still list with question_count of total rows
+                        pass
+                    name = data.get("name", f.stem)
+                    by_name[name] = QuestionBankInfo(
+                        name=name,
                         version=data.get("version", "v?"),
                         subject=data.get("subject", ""),
                         path=str(f),
-                        question_count=len(data.get("questions", [])),
-                    ))
+                        question_count=len(questions),
+                    )
                 except Exception:
                     continue
-        return banks
+
+        for extracted in self._iter_module_extracted():
+            bank = self._load_module_bank(extracted)
+            if not bank:
+                continue
+            name = bank["name"]
+            by_name[name] = QuestionBankInfo(
+                name=name,
+                version=str(bank.get("version") or "module"),
+                subject=str(bank.get("subject") or ""),
+                path=str(bank["path"]),
+                question_count=len(bank.get("questions") or []),
+            )
+        return sorted(by_name.values(), key=lambda b: (b.subject, b.name))
 
     def upload_question_bank(
         self,
@@ -459,62 +557,96 @@ class LibraryService:
 
     def get_question_bank(self, name: str) -> Optional[Dict[str, Any]]:
         """Return a single question bank's full JSON (including its
-        ``questions`` list), or ``None`` if it does not exist."""
+        ``questions`` list), or ``None`` if it does not exist.
+
+        Resolves both ``tests/regression_datasets/{name}.json`` and
+        ``modules/<subject>/{name}/extracted.json``.
+        """
+        import json as _json
+
+        path = self._resolve_bank_path(name)
+        if path is None:
+            return None
+        if path.name == "extracted.json":
+            return self._load_module_bank(path)
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if isinstance(data, dict) and "name" not in data:
+            data["name"] = name
+        if isinstance(data, dict):
+            data.setdefault("source", "regression_datasets")
+        return data
+
+    def delete_question_bank(self, name: str) -> Dict[str, Any]:
+        """Delete a question bank dataset.
+
+        - Regression-dataset banks: remove the JSON under
+          ``tests/regression_datasets/``.
+        - Module banks (``modules/.../extracted.json``): move the module
+          folder to ``trash/modules/<name>/`` (never hard-wipe, never
+          touch ``answers/``).
+
+        Does **not** delete answer cache — use ``DELETE /cache/...`` for that.
+        """
+        import shutil
         import json as _json
 
         safe = "".join(c for c in name if c.isalnum() or c in ("-", "_", ".")).strip() or "bank"
+        removed = False
+        kind = None
+
+        # 1) regression dataset JSON
         ds_dir = self._home / "tests" / "regression_datasets"
-        path = ds_dir / f"{safe}.json"
-        if not path.is_file():
-            # Fall back to a scan by declared name (in case the file stem differs).
-            if ds_dir.exists():
+        target = ds_dir / f"{safe}.json" if ds_dir.is_dir() else None
+        if target is None or not target.is_file():
+            target = None
+            if ds_dir.is_dir():
                 for f in ds_dir.glob("*.json"):
                     try:
-                        data = _json.loads(f.read_text(encoding="utf-8"))
+                        if _json.loads(f.read_text(encoding="utf-8")).get("name") == name:
+                            target = f
+                            break
                     except Exception:  # noqa: BLE001
                         continue
-                    if data.get("name") == name:
-                        return data
-            return None
-        try:
-            return _json.loads(path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            return None
-
-    def delete_question_bank(self, name: str) -> Dict[str, Any]:
-        """Delete a question bank (its JSON dataset and staged PDF)."""
-        safe = "".join(c for c in name if c.isalnum() or c in ("-", "_", ".")).strip() or "bank"
-        ds_dir = self._home / "tests" / "regression_datasets"
-        path = ds_dir / f"{safe}.json"
-        removed = False
-        # Resolve by declared name too, in case the stem differs.
-        target = path if path.is_file() else None
-        if target is None and ds_dir.exists():
-            import json as _json
-            for f in ds_dir.glob("*.json"):
-                try:
-                    if _json.loads(f.read_text(encoding="utf-8")).get("name") == name:
-                        target = f
-                        break
-                except Exception:  # noqa: BLE001
-                    continue
-        if target is not None and target.exists():
+        if target is not None and target.is_file():
             try:
                 target.unlink()
                 removed = True
+                kind = "regression_datasets"
             except Exception:  # noqa: BLE001
                 pass
-        # Best-effort: remove the staged source PDF too.
+
+        # 2) modules/<subject>/<name>/ — archive to trash, do not destroy answers
+        for extracted in self._iter_module_extracted():
+            if extracted.parent.name != safe and extracted.parent.name != name:
+                continue
+            mod_dir = extracted.parent
+            trash = self._home / "trash" / "modules" / safe
+            trash.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if trash.exists():
+                    shutil.rmtree(trash)
+                shutil.move(str(mod_dir), str(trash))
+                removed = True
+                kind = "modules"
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": f"failed to archive module: {exc}", "name": name}
+            break
+
+        # Best-effort: staged PDF only (not the whole modules tree)
         for sub in ("modules", "inbox"):
             pdf = self._home / sub / f"{safe}.pdf"
-            if pdf.exists():
+            if pdf.is_file():
                 try:
                     pdf.unlink()
                 except Exception:  # noqa: BLE001
                     pass
+
         if not removed:
             return {"ok": False, "error": f"question bank not found: {name}", "name": name}
-        return {"ok": True, "name": name}
+        return {"ok": True, "name": name, "kind": kind}
 
     def reindex(self, book_id: str) -> Dict[str, Any]:
         """Re-index a single book.

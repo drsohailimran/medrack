@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -169,6 +170,180 @@ def run_ingest_book(
     }
 
 
+def _ocr_agent_url() -> str:
+    import os
+
+    return (
+        os.environ.get("MEDRACK_OCR_AGENT_URL")
+        or "http://192.168.29.89:8090"
+    ).rstrip("/")
+
+
+def run_hybrid_ingest_book(
+    job,
+    progress: Progress,
+    *,
+    pdf_path: str,
+    subject: str,
+    title: str,
+    replace: bool = False,
+    use_marker: bool = False,
+) -> Dict[str, Any]:
+    """P1 single-UI hybrid ingest.
+
+    Prefer **push** to Windows OCR agent (started with Start MedRack):
+      stop Qwopus → RapidOCR → validate → text PDF → start Qwopus
+    then Ubuntu indexes the clean PDF.
+
+    If the agent is not reachable on :8090, fall back to **queue + pull**
+    (agent's background pull loop claims the job).
+    """
+    import httpx
+    from medrack.config import get_medrack_home
+    from medrack.dashboard.services import ocr_bridge
+
+    pdf = Path(pdf_path).expanduser()
+    if not pdf.is_file():
+        raise FileNotFoundError(f"uploaded file not found: {pdf}")
+
+    agent = _ocr_agent_url()
+    mode = "push"
+    ocr_job_id: Optional[str] = None
+    clean_bytes: Optional[bytes] = None
+
+    # ---- Prefer push (agent started by Start MedRack) ----
+    progress(1, "Contacting Windows OCR agent (integrated with Start MedRack)…")
+    agent_up = False
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            hr = client.get(f"{agent}/v1/health")
+            agent_up = hr.status_code == 200
+    except Exception:  # noqa: BLE001
+        agent_up = False
+
+    if agent_up:
+        progress(2, "Stopping Qwopus + starting hybrid OCR on Windows…")
+        with httpx.Client(timeout=120.0) as client:
+            with open(pdf, "rb") as fh:
+                resp = client.post(
+                    f"{agent}/v1/jobs",
+                    files={"file": (pdf.name, fh, "application/pdf")},
+                    data={
+                        "use_marker": "1" if use_marker else "0",
+                        "title": title or pdf.stem,
+                    },
+                )
+                resp.raise_for_status()
+                ocr_job_id = resp.json().get("job_id")
+        if not ocr_job_id:
+            raise RuntimeError("OCR agent returned no job_id")
+
+        progress(3, "Windows: stop model → OCR → validate → restart model…")
+        deadline = time.time() + 6 * 3600
+        last_msg = ""
+        while time.time() < deadline:
+            with httpx.Client(timeout=30.0) as client:
+                st = client.get(f"{agent}/v1/jobs/{ocr_job_id}")
+                st.raise_for_status()
+                body = st.json()
+            status = body.get("status")
+            apct = float(body.get("percent") or 0.0)
+            msg = body.get("message") or status or "OCR"
+            overall = 3.0 + 0.67 * apct
+            if msg != last_msg:
+                progress(overall, msg)
+                last_msg = msg
+            if status == "done":
+                break
+            if status == "error":
+                raise RuntimeError(f"Hybrid OCR failed: {body.get('error') or body}")
+            time.sleep(2.0)
+        else:
+            raise TimeoutError("Hybrid OCR timed out (6h)")
+
+        progress(72, "Downloading clean text PDF…")
+        with httpx.Client(timeout=300.0) as client:
+            pr = client.get(f"{agent}/v1/jobs/{ocr_job_id}/pdf")
+            pr.raise_for_status()
+            clean_bytes = pr.content
+    else:
+        # ---- Fallback: queue for agent pull loop ----
+        mode = "pull"
+        progress(
+            2,
+            "OCR agent not on :8090 — queueing job. "
+            "Use Start MedRack so the OCR agent is running.",
+        )
+        ocr_job_id = ocr_bridge.create_ocr_job(
+            source_pdf=pdf,
+            title=title or pdf.stem,
+            subject=subject,
+            use_marker=use_marker,
+        )
+        progress(
+            3,
+            f"Waiting for Windows agent to claim job {ocr_job_id[:8]}… "
+            "(agent starts with Start MedRack)",
+        )
+        deadline = time.time() + 6 * 3600
+        last_msg = ""
+        while time.time() < deadline:
+            meta = ocr_bridge.load_meta(ocr_job_id) or {}
+            status = meta.get("status") or "unknown"
+            apct = float(meta.get("percent") or 0.0)
+            msg = meta.get("message") or status
+            overall = 3.0 + 0.67 * apct
+            if msg != last_msg:
+                progress(overall, f"Windows OCR: {msg}")
+                last_msg = msg
+            if status == "done":
+                break
+            if status == "error":
+                raise RuntimeError(f"Hybrid OCR failed: {meta.get('error') or meta}")
+            time.sleep(2.0)
+        else:
+            raise TimeoutError(
+                "Timed out waiting for OCR agent. Click Start MedRack on Windows "
+                "so the OCR agent is running, then try again."
+            )
+        clean_src = ocr_bridge.result_path(ocr_job_id)
+        if not clean_src or not clean_src.is_file():
+            raise FileNotFoundError("OCR finished but clean_text.pdf missing")
+        clean_bytes = clean_src.read_bytes()
+
+    home = get_medrack_home()
+    books = home / "books"
+    books.mkdir(parents=True, exist_ok=True)
+    safe = "".join(
+        c for c in (title or pdf.stem) if c.isalnum() or c in ("-", "_", " ")
+    )[:80].strip()
+    clean_path = books / f"{safe or 'book'}_hybrid_ocr.pdf"
+    clean_path.write_bytes(clean_bytes or b"")
+    progress(
+        75,
+        f"OCR validated — clean PDF {clean_path.stat().st_size // 1024} KB — indexing…",
+    )
+
+    def sub_progress(pct: float, message: str = "") -> None:
+        progress(75.0 + 0.25 * float(pct), message or "Indexing clean OCR PDF")
+
+    result = run_ingest_book(
+        job,
+        sub_progress,
+        pdf_path=str(clean_path),
+        subject=subject,
+        title=title,
+        replace=replace,
+    )
+    result["hybrid_ocr"] = True
+    result["ocr_mode"] = mode
+    result["clean_pdf"] = str(clean_path)
+    result["ocr_job_id"] = ocr_job_id
+    result["use_marker"] = use_marker
+    progress(100, "Done — book indexed; Qwopus should be back online")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Job: extract a question bank from a PDF
 # ---------------------------------------------------------------------------
@@ -317,10 +492,29 @@ def run_solve_bank(
 
     home = config.get_medrack_home()
     safe = _safe_stem(bank_name)
+    # Resolve bank from regression_datasets OR modules/*/extracted.json
+    # (CLI-ingested modules live under modules/ and were invisible when
+    # this only looked at regression_datasets).
     bank_path = home / "tests" / "regression_datasets" / f"{safe}.json"
-    if not bank_path.is_file():
-        raise FileNotFoundError(f"question bank not found: {bank_name}")
-    data = json.loads(bank_path.read_text(encoding="utf-8"))
+    data: Dict[str, Any]
+    if bank_path.is_file():
+        data = json.loads(bank_path.read_text(encoding="utf-8"))
+    else:
+        data = {}
+        modules_root = home / "modules"
+        extracted: Optional[Path] = None
+        if modules_root.is_dir():
+            for p in modules_root.rglob("extracted.json"):
+                if p.parent.name == safe or p.parent.name == bank_name:
+                    extracted = p
+                    break
+        if extracted is None:
+            raise FileNotFoundError(f"question bank not found: {bank_name}")
+        data = json.loads(extracted.read_text(encoding="utf-8"))
+        if "subject" not in data:
+            # modules/<subject>/<name>/extracted.json
+            data["subject"] = extracted.parent.parent.name
+        data.setdefault("name", bank_name)
     raw_questions = data.get("questions", [])
     subj = data.get("subject", subject) or subject
 
@@ -363,7 +557,13 @@ def run_solve_bank(
 
     def batch_progress(done: int, tot: int) -> None:
         frac = (done / tot) if tot else 1.0
-        progress(3 + 88 * frac, f"Answered {done}/{tot}")
+        msg = f"Answered {done}/{tot}"
+        if getattr(job, "cancel_requested", False):
+            msg = f"Stopping… {done}/{tot} so far"
+        progress(3 + 88 * frac, msg)
+
+    def cancel_check() -> bool:
+        return bool(getattr(job, "cancel_requested", False))
 
     # Per-marks answer length from the UI's two length boxes.
     word_targets: dict = {}
@@ -382,27 +582,65 @@ def run_solve_bank(
         progress=batch_progress,
         marks=marks,
         word_targets=word_targets or None,
+        cancel_check=cancel_check,
     )
 
-    progress(93, "Rendering solved PDF")
+    # Review payload: which answers this run produced (for keep/delete UI).
+    answer_summaries = []
+    for a in batch.answers:
+        answer_summaries.append(
+            {
+                "qid": a.get("qid"),
+                "question_text": (a.get("question_text") or "")[:240],
+                "module": a.get("module_name") or safe,
+                "chapter": a.get("module_chapter") or a.get("chapter") or "",
+                "cache_hit": bool(a.get("cache_hit")),
+                "needs_review": bool(a.get("needs_review")),
+                "word_count": len((a.get("answer_text") or "").split()),
+            }
+        )
+
     out_dir = home / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / f"{safe}_solved.pdf"
-    render_full_module_pdf(
-        pdf_path,
-        module_name=bank_name,
-        subject=subj,
-        batch_result=batch,
-        answers=batch.answers,
-    )
-    progress(100, "Solved")
-    return {
-        "pdf_path": str(pdf_path),
-        "download_name": f"{safe}-solved.pdf",
+    pdf_ready = False
+    if batch.answers:
+        progress(93, "Rendering solved PDF" if not batch.cancelled else "Rendering partial PDF")
+        render_full_module_pdf(
+            pdf_path,
+            module_name=bank_name,
+            subject=subj,
+            batch_result=batch,
+            answers=batch.answers,
+        )
+        pdf_ready = True
+
+    result: Dict[str, Any] = {
+        "pdf_path": str(pdf_path) if pdf_ready else None,
+        "download_name": f"{safe}-solved.pdf" if pdf_ready else None,
         "questions_total": batch.questions_total,
         "answered": len(batch.answers),
         "failed": batch.questions_failed,
+        "skipped": batch.questions_skipped,
+        "cancelled": bool(batch.cancelled),
+        "module": safe,
+        "bank_name": bank_name,
+        "answers": answer_summaries,
+        "failed_qids": list(batch.failed_qids),
     }
+    if batch.cancelled:
+        progress(
+            3 + 88 * (len(batch.answers) / total if total else 1.0),
+            f"Stopped — kept {len(batch.answers)} of {total} (review keep/delete)",
+        )
+    else:
+        progress(100, "Solved")
+    return result
 
 
-__all__ = ["run_ingest_book", "run_extract_bank", "run_solve_bank"]
+__all__ = [
+    "run_ingest_book",
+    "run_hybrid_ingest_book",
+    "run_extract_bank",
+    "run_solve_bank",
+]

@@ -212,8 +212,8 @@ LLM_PER_ATTEMPT_TIMEOUT_SEC = float(
 # prompt stays a few thousand tokens and the LLM responds quickly. These
 # only affect the prompt context — the full chunks are still recorded in
 # the answer's retrieval metadata.
-PROMPT_CONTEXT_MAX_CHUNKS = 5
-PROMPT_CONTEXT_MAX_CHARS_PER_CHUNK = 1500
+PROMPT_CONTEXT_MAX_CHUNKS = 8
+PROMPT_CONTEXT_MAX_CHARS_PER_CHUNK = 2500
 
 # ----- Answer targets (operator-set 2026-06-29, directive v1.0) -----
 # 10-mark theory: 700-850 words (midpoint 775, ±10% = 697-852)
@@ -351,11 +351,11 @@ EMBEDDING_DIM = 384
 #                  changes. Re-renders produce different PDFs even if
 #                  the LLM text is identical.
 PIPELINE_VERSIONS: dict[str, int] = {
-    "schema": 2,     # Phase 3: added versions, target_word_count, package_version, embedding_model
-    "prompt": 1,     # Phase 2: subject-aware prompt (K. Park vs Narayan Reddy etc.)
+    "schema": 3,     # P0: validation report + needs_review + kb_revision on answers
+    "prompt": 6,     # P0.4: 10-mark hard stop + anti laundry-list on open stems
     "retrieval": 1,  # current retrieval config (top_k=8, MiniLM-L6-v2)
     "planner": 0,    # not yet implemented
-    "validator": 0,  # not yet implemented
+    "validator": 5,  # P0.4: tighter 10-mark max + PPP/WASH allowlist
     "reranker": 0,   # not yet implemented
     "renderer": 1,   # current renderer (K. Park style, commit c668289)
 }

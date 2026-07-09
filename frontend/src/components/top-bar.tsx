@@ -1,9 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { Command, HelpCircle, Menu, Search } from "lucide-react";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
   const { data: version } = useQuery({ queryKey: ["version"], queryFn: () => api.getVersion() });
+  const { data: llm } = useQuery({
+    queryKey: ["llm-status"],
+    queryFn: () => api.getLlmStatus(),
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+
+  const llmLabel = llm
+    ? `${llm.model || "?"} · ${llm.provider || "?"}`
+    : "LLM …";
+  const llmTitle = llm
+    ? `${llm.online ? "Online" : "Offline"} — ${llm.provider}/${llm.model}\n${llm.base_url || "(no endpoint)"}${llm.detail ? `\n${llm.detail}` : ""}${llm.latency_ms != null ? `\nProbe ${llm.latency_ms} ms` : ""}`
+    : "Checking LLM…";
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:gap-3 sm:px-4">
@@ -30,6 +44,27 @@ export function TopBar({ onMenuClick }: { onMenuClick?: () => void }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        {/* P3: live LLM indicator */}
+        <span
+          title={llmTitle}
+          className={cn(
+            "inline-flex max-w-[11rem] items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[10px] sm:max-w-[16rem]",
+            llm?.online
+              ? "border-success/30 bg-success/10 text-success"
+              : llm
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-border bg-surface",
+          )}
+        >
+          <span
+            className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              llm?.online ? "bg-success" : llm ? "bg-destructive" : "bg-muted-foreground animate-pulse",
+            )}
+            aria-hidden
+          />
+          <span className="truncate">{llmLabel}</span>
+        </span>
         <span className="hidden rounded-md border border-border bg-surface px-2 py-1 font-mono text-[10px] md:inline-flex">
           {version ? `v${version.package_version}` : "v—"}
         </span>

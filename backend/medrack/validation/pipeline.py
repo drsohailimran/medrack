@@ -64,15 +64,18 @@ from medrack.validation.rules import (
     EmptySectionRule,
     EvidenceCoverageRule,
     FormattingRule,
+    GroundingRule,
     HeadingStructureRule,
     ReferenceConsistencyRule,
     RequiredSectionsRule,
     Rule,
+    ScopeLengthRule,
+    TruncationRule,
     WordCountRule,
 )
 
 
-# Default v1 rule set: 9 rules in a sensible order.
+# Default rule set: original 9 + P0 quality gates.
 # NOTE: these are class references, not instances. The pipeline
 # instantiates them at construction time so each pipeline gets
 # fresh rule instances (avoids test isolation issues where one
@@ -87,6 +90,10 @@ DEFAULT_RULES: List[type] = [
     BlueprintComplianceRule,
     EvidenceCoverageRule,
     ReferenceConsistencyRule,
+    # P0 — bulletproof quality gates (run even without a blueprint)
+    ScopeLengthRule,
+    GroundingRule,
+    TruncationRule,
 ]
 
 
@@ -139,6 +146,7 @@ class ValidationPipeline:
         self,
         answer: str,
         blueprint: Optional[Any] = None,
+        context: Optional[dict] = None,
     ) -> ValidationReport:
         """Run the pipeline against an answer.
 
@@ -149,6 +157,10 @@ class ValidationPipeline:
         blueprint:
             Optional blueprint (duck-typed; any object with
             ``.sections`` and ``.target_word_count``). Read-only.
+        context:
+            Optional generation context for P0 rules
+            (``source_text``, ``question_text``, ``marks``,
+            ``subject``). Read-only.
 
         Returns
         -------
@@ -169,7 +181,12 @@ class ValidationPipeline:
         for rule in self.rules:
             if not rule.enabled:
                 continue
-            result = rule.check(answer, blueprint)
+            # P0: pass context when the rule accepts it; keep older
+            # 2-arg custom rules working.
+            try:
+                result = rule.check(answer, blueprint, context)
+            except TypeError:
+                result = rule.check(answer, blueprint)
             results.append(result)
             if result.severity == Severity.FAIL:
                 failed.append(rule.name)

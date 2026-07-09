@@ -24,7 +24,7 @@ def make_question(qid="q001", qtype="mcq", chapter="chapter 1"):
 def make_mock_llm():
     """Mock LLM that returns a deterministic answer per question."""
     client = MagicMock()
-    def complete_side_effect(prompt, max_output_tokens=None):
+    def complete_side_effect(prompt):
         # Extract qid from prompt to make answer identifiable
         import re
         m = re.search(r"QUESTION:.*?(q\d+)", prompt, re.DOTALL)

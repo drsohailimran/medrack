@@ -1,5 +1,36 @@
 # MedRack
 
+**Release: v1.1.0** (2026-07-10)
+
+Local-first MBBS exam answer RAG for Sohail & family. Canonical deploy: Ubuntu app + Windows Qwopus + hybrid OCR agent.
+
+### v1.1.0 highlights
+- **P0** Bulletproof answers — scope/grounding/validator, length bands, stale cache (`prompt:6`, `validator:5`)
+- **P1** Hybrid OCR ingest — Windows RapidOCR (+ optional Marker) via agent + reverse tunnel; one-button Books UI
+- **P2** Multi-subject mass book ingest — **deferred** (owner-driven; hybrid path ready)
+- **P3** UX — stop generation mid-batch + keep/delete review; live LLM indicator in top bar
+- **P4** Housekeeping — repo matches machines; Windows launcher + OCR agent in tree; archive left on server only
+
+### Quick layout
+```
+backend/          FastAPI + RAG pipeline (package medrack)
+frontend/         TanStack Start UI (build: nitro node-server)
+docs/             PHASES, handoff, troubleshooting
+windows/launcher  Start/Stop MedRack (Windows)
+windows/ocr       Hybrid OCR agent (Windows)
+start_stack.sh    Ubuntu API + UI + Gradio
+```
+
+### Production ports (LAN)
+- UI: `http://<ubuntu>:3010`
+- API: `http://<ubuntu>:8010/api/v1`
+- Qwopus: Windows `:8080`
+- OCR agent: Windows `:8090` (Ubuntu reaches via reverse tunnel `127.0.0.1:18090`)
+
+---
+
+
+
 **A local-first RAG system that turns MBBS exam question banks into beautifully formatted, exam-ready answer PDFs.**
 
 MedRack ingests medical textbooks (e.g. *Park's Preventive & Social Medicine*) into a vector knowledge base, extracts questions from exam-bank PDFs, retrieves the relevant textbook context for each question, and uses an LLM to write structured, exam-style answers — complete with section headings, bullet points, comparison **tables**, and **flowchart diagrams** — rendered into a polished, print-ready PDF.

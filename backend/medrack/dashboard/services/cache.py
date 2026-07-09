@@ -147,15 +147,27 @@ class CacheService:
         ``module`` scopes the search to one bank/module directory — important
         because plain qids like ``q001`` are NOT unique across banks, so an
         unscoped delete would remove same-named answers from other banks.
+
+        Safety: only unlinks files under ``MEDRACK_HOME/answers/``. Never
+        touches question-bank modules under ``modules/``.
         """
-        cache_root = self._home / "answers"
+        cache_root = (self._home / "answers").resolve()
         search_root = cache_root
         if module:
             safe = "".join(c for c in module if c.isalnum() or c in ("-", "_", ".")).strip()
-            search_root = cache_root / safe
+            search_root = (cache_root / safe).resolve()
+            try:
+                search_root.relative_to(cache_root)
+            except ValueError:
+                return {"ok": False, "qid": qid, "removed": 0, "error": "refusing path outside answers/"}
         removed = 0
         if search_root.exists():
             for cache_file in search_root.rglob(f"{qid}.json"):
+                try:
+                    resolved = cache_file.resolve()
+                    resolved.relative_to(cache_root)
+                except ValueError:
+                    continue
                 try:
                     cache_file.unlink()
                     removed += 1
@@ -165,13 +177,26 @@ class CacheService:
 
     def delete_module(self, module: str) -> Dict[str, Any]:
         """Delete every cached answer under a module directory (i.e. all
-        answers for one question bank)."""
+        answers for one question bank).
+
+        Safety: only ever deletes under ``MEDRACK_HOME/answers/<module>/``.
+        Never touches ``modules/`` (question banks) or other data dirs.
+        """
         import shutil
 
         safe = "".join(c for c in module if c.isalnum() or c in ("-", "_", ".")).strip()
+        if not safe or safe in (".", ".."):
+            return {"ok": False, "module": module, "error": "invalid module name"}
         removed = 0
-        cache_root = self._home / "answers"
-        mod_dir = cache_root / safe
+        cache_root = (self._home / "answers").resolve()
+        mod_dir = (cache_root / safe).resolve()
+        # Path-traversal / wrong-tree guard
+        try:
+            mod_dir.relative_to(cache_root)
+        except ValueError:
+            return {"ok": False, "module": module, "error": "refusing path outside answers/"}
+        if mod_dir == cache_root:
+            return {"ok": False, "module": module, "error": "refusing to delete entire answers root"}
         if mod_dir.is_dir():
             # Count files before removing for a useful response.
             removed = sum(1 for _ in mod_dir.rglob("*.json"))

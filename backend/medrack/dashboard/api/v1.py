@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -236,21 +236,49 @@ def make_router() -> APIRouter:
         subject: str = Form(...),
         title: str = Form(...),
         replace: bool = Form(False),
+        hybrid_ocr: bool = Form(False),
+        use_marker: bool = Form(False),
     ):
         """Upload a book PDF and ingest it into the knowledge base.
 
         Runs the full T1-T9 pipeline (extract -> chunk -> embed -> index
         into ChromaDB) on a background thread and returns a ``job_id``.
         Poll ``GET /jobs/{job_id}`` for live progress.
+
+        P1 hybrid_ocr=True: send the PDF to the Windows OCR agent first
+        (stop Qwopus → RapidOCR [+ optional Marker] → full text PDF →
+        start Qwopus), then ingest the clean PDF on Ubuntu.
         """
         from medrack.config import get_medrack_home
-        from medrack.dashboard.services.tasks import run_ingest_book
+        from medrack.dashboard.services.tasks import (
+            run_hybrid_ingest_book,
+            run_ingest_book,
+        )
 
         home = get_medrack_home()
         inbox = home / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
         dest = inbox / (file.filename or f"{title}.pdf")
         dest.write_bytes(file.file.read())
+        if hybrid_ocr:
+            job = registry.run(
+                "hybrid_ingest_book",
+                lambda job, progress: run_hybrid_ingest_book(
+                    job,
+                    progress,
+                    pdf_path=str(dest),
+                    subject=subject,
+                    title=title,
+                    replace=replace,
+                    use_marker=use_marker,
+                ),
+            )
+            return {
+                "job_id": job.id,
+                "kind": "hybrid_ingest_book",
+                "book_title": title,
+                "hybrid_ocr": True,
+            }
         job = registry.run(
             "ingest_book",
             lambda job, progress: run_ingest_book(
@@ -401,6 +429,28 @@ def make_router() -> APIRouter:
             return error_response(404, "JOB_NOT_FOUND", f"job not found: {job_id}")
         return job.to_dict()
 
+    @router.post("/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str):
+        """Request cooperative cancel of a running job (P3).
+
+        The current question finishes; remaining questions are skipped.
+        For solve_bank, partial answers stay on disk for keep/delete review.
+        """
+        job = registry.request_cancel(job_id)
+        if job is None:
+            return error_response(404, "JOB_NOT_FOUND", f"job not found: {job_id}")
+        return {
+            "ok": True,
+            "job_id": job.id,
+            "status": job.status,
+            "cancel_requested": job.cancel_requested,
+            "message": (
+                "Cancel requested — will stop after the current question."
+                if job.status == "running"
+                else f"Job already {job.status}."
+            ),
+        }
+
     @router.get("/jobs/{job_id}/pdf")
     def get_job_pdf(job_id: str):
         job = registry.get(job_id)
@@ -408,7 +458,8 @@ def make_router() -> APIRouter:
             return error_response(404, "JOB_NOT_FOUND", f"job not found: {job_id}")
         result = job.result or {}
         pdf_path = result.get("pdf_path")
-        if job.status != "done" or not pdf_path or not os.path.exists(pdf_path):
+        # Partial PDF after cancel is also downloadable.
+        if job.status not in ("done", "cancelled") or not pdf_path or not os.path.exists(pdf_path):
             return error_response(409, "PDF_NOT_READY", "the PDF for this job is not ready")
         return FileResponse(
             pdf_path, media_type="application/pdf", filename=result.get("download_name", "medrack.pdf")
@@ -530,6 +581,69 @@ def make_router() -> APIRouter:
     def version_info():
         return version.get_info().to_dict()
 
+    # ---- LLM live status (P3 indicator) ----
+
+    @router.get("/llm/status")
+    def llm_status():
+        """Live LLM indicator: provider, model, endpoint, reachability."""
+        import os
+        from medrack import config as cfg
+
+        mode = os.environ.get("MEDRACK_LLM_MODE", "real").lower()
+        provider = getattr(cfg, "LLM_PROVIDER", "unknown")
+        model = getattr(cfg, "LLM_DEFAULT_MODEL", "unknown")
+        base_url = getattr(cfg, "LLM_BASE_URL", "")
+        online = False
+        detail = ""
+        latency_ms: Optional[float] = None
+
+        if mode == "mock":
+            online = True
+            detail = "mock client (no network)"
+        else:
+            # Probe endpoint: llama.cpp /health, OpenAI-compat /v1/models, else base URL.
+            probes = []
+            if base_url:
+                probes = [
+                    f"{base_url.rstrip('/')}/health",
+                    f"{base_url.rstrip('/')}/v1/models",
+                    base_url.rstrip("/"),
+                ]
+            try:
+                import httpx
+                import time as _time
+
+                t0 = _time.perf_counter()
+                with httpx.Client(timeout=2.5) as client:
+                    last_err = "unreachable"
+                    for url in probes:
+                        try:
+                            r = client.get(url)
+                            # Any HTTP response means the server is up.
+                            if r.status_code < 500:
+                                online = True
+                                detail = f"HTTP {r.status_code} from {url}"
+                                break
+                            last_err = f"HTTP {r.status_code} from {url}"
+                        except Exception as exc:  # noqa: BLE001
+                            last_err = str(exc)
+                    if not online:
+                        detail = last_err
+                latency_ms = round((_time.perf_counter() - t0) * 1000.0, 1)
+            except Exception as exc:  # noqa: BLE001
+                detail = str(exc)
+
+        return {
+            "schema_version": 1,
+            "mode": mode,
+            "provider": provider,
+            "model": model,
+            "base_url": base_url,
+            "online": online,
+            "detail": detail,
+            "latency_ms": latency_ms,
+        }
+
     # ---- Logs ----
 
     @router.get("/logs/{name}")
@@ -557,6 +671,97 @@ def make_router() -> APIRouter:
                 ),
             )
         return logs.search(name, query, n)
+
+    # ---- P1 OCR agent bridge (Windows pull worker) ----
+
+    def _ocr_auth(x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token")):
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(
+                status_code=401,
+                error_code="OCR_UNAUTHORIZED",
+                message="invalid or missing X-OCR-Token",
+            )
+        return None
+
+    @router.get("/ocr/agent/claim")
+    def ocr_agent_claim(x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token")):
+        """Windows agent claims the next queued hybrid-OCR job (or null)."""
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(401, "OCR_UNAUTHORIZED", "invalid or missing X-OCR-Token")
+        claimed = ocr_bridge.claim_next()
+        return {"job": claimed}
+
+    @router.get("/ocr/agent/jobs/{job_id}/source")
+    def ocr_agent_source(
+        job_id: str,
+        x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token"),
+    ):
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(401, "OCR_UNAUTHORIZED", "invalid or missing X-OCR-Token")
+        path = ocr_bridge.source_path(job_id)
+        if path is None:
+            return error_response(404, "OCR_JOB_NOT_FOUND", f"no source for {job_id}")
+        return FileResponse(str(path), media_type="application/pdf", filename="source.pdf")
+
+    @router.post("/ocr/agent/jobs/{job_id}/progress")
+    def ocr_agent_progress(
+        job_id: str,
+        body: dict,
+        x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token"),
+    ):
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(401, "OCR_UNAUTHORIZED", "invalid or missing X-OCR-Token")
+        try:
+            ocr_bridge.update_progress(
+                job_id,
+                percent=float(body.get("percent") or 0),
+                message=str(body.get("message") or ""),
+                status=str(body.get("status") or "running"),
+            )
+        except FileNotFoundError:
+            return error_response(404, "OCR_JOB_NOT_FOUND", job_id)
+        return {"ok": True}
+
+    @router.post("/ocr/agent/jobs/{job_id}/result")
+    async def ocr_agent_result(
+        job_id: str,
+        file: UploadFile = File(...),
+        x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token"),
+    ):
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(401, "OCR_UNAUTHORIZED", "invalid or missing X-OCR-Token")
+        dest = ocr_bridge.ocr_jobs_root() / job_id / "clean_upload.pdf"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(await file.read())
+        try:
+            ocr_bridge.mark_done(job_id, dest)
+        except Exception as exc:  # noqa: BLE001
+            ocr_bridge.mark_error(job_id, str(exc))
+            return error_response(500, "OCR_RESULT_FAILED", str(exc))
+        return {"ok": True}
+
+    @router.post("/ocr/agent/jobs/{job_id}/error")
+    def ocr_agent_error(
+        job_id: str,
+        body: dict,
+        x_ocr_token: Optional[str] = Header(default=None, alias="X-OCR-Token"),
+    ):
+        from medrack.dashboard.services import ocr_bridge
+
+        if not ocr_bridge.check_token(x_ocr_token):
+            return error_response(401, "OCR_UNAUTHORIZED", "invalid or missing X-OCR-Token")
+        ocr_bridge.mark_error(job_id, str(body.get("error") or "unknown"))
+        return {"ok": True}
 
     return router
 

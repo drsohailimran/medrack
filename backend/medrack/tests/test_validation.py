@@ -383,7 +383,8 @@ def test_word_count_rule_constructor_tolerance():
 
 def test_pipeline_default_rules_count():
     pipeline = ValidationPipeline()
-    assert len(pipeline.rules) == 9
+    # Original 9 structural rules + 3 P0 quality gates
+    assert len(pipeline.rules) == 12
 
 
 def test_pipeline_default_rules_names():
@@ -398,6 +399,9 @@ def test_pipeline_default_rules_names():
     assert "FormattingRule" in names
     assert "EmptySectionRule" in names
     assert "ReferenceConsistencyRule" in names
+    assert "ScopeLengthRule" in names
+    assert "GroundingRule" in names
+    assert "TruncationRule" in names
 
 
 def test_pipeline_passes_clean_answer():
@@ -408,9 +412,25 @@ def test_pipeline_passes_clean_answer():
     pipeline.disable_rule("RequiredSectionsRule")
     pipeline.disable_rule("BlueprintComplianceRule")
     pipeline.disable_rule("EvidenceCoverageRule")
-    answer = "Management: real content here\nEpidemiology: more content"
-    report = pipeline.validate(answer)
-    assert report.pass_ is True
+    answer = (
+        "Management: high-risk mothers need intensified monitoring.\n"
+        "Epidemiology: maternal mortality falls with skilled care.\n"
+        "Prevention: iron folic acid and tetanus toxoid are essential.\n"
+        "Conclusion: stay on the asked topic for a five-mark answer.\n"
+    ) + " " + " ".join(f"wx{i:03d}" for i in range(280))
+    report = pipeline.validate(
+        answer,
+        context={
+            "source_text": (
+                "Management and epidemiology content from textbook. High-risk mothers need "
+                "monitoring. Iron folic acid and tetanus toxoid are essential."
+            ),
+            "marks": 5,
+            "subject": "psm",
+            "target_word_count": 375,
+        },
+    )
+    assert report.pass_ is True, (report.failed_rules, len(answer.split()))
     assert report.score == 1.0
 
 
@@ -423,7 +443,7 @@ def test_pipeline_fails_with_empty_answer():
 def test_pipeline_aggregates_results():
     pipeline = ValidationPipeline()
     report = pipeline.validate("Some answer text.")
-    assert len(report.results) == 9  # all 9 rules ran
+    assert len(report.results) == 12  # all default rules ran
     assert report.score >= 0.0
     assert report.score <= 1.0
 
@@ -608,4 +628,4 @@ def test_validation_pipeline_constructor_accepts_custom_rules():
 
 def test_validation_pipeline_constructor_accepts_none_uses_default():
     pipeline = ValidationPipeline(rules=None)
-    assert len(pipeline.rules) == 9
+    assert len(pipeline.rules) == 12

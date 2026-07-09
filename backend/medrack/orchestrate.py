@@ -185,6 +185,19 @@ def cmd_ingest_book(args: argparse.Namespace) -> int:
         print(f"ERROR: indexing failed: {exc}", file=sys.stderr)
         return 5
 
+    # P0: bump per-subject KB revision so cached answers for this
+    # subject are marked stale and regenerated with new grounding.
+    try:
+        from medrack.answer.kb_revision import bump_kb_revision
+        new_rev = bump_kb_revision(subject.value)
+        print(
+            f"  kb_revision[{subject.value}] -> {new_rev} "
+            f"(cached answers for this subject will regenerate)",
+            file=sys.stderr,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kb_revision bump failed: %s", exc)
+
     print(f"Running OCR quality gate...", file=sys.stderr)
     quality_report = quality_mod.check_ocr_quality(cleaned_pages)
 

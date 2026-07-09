@@ -68,6 +68,8 @@ RESPOND IN THIS EXACT FORMAT:
 
 RULES:
 - Point form only. NO paragraphs.
+- SCOPE: explain only what is needed to justify the correct option — do not dump unrelated programmes.
+- HARD GROUNDING: Do NOT invent scheme names or statistics. Name a scheme/law/stat only if it appears in SOURCE MATERIAL or is a universal textbook fact. Never use non-Indian programmes (e.g. US PRAMS) for Indian exams. If unsure, state the general principle.
 - The answer letter MUST be one of: {options_letters}
 - Bold key terms with **asterisks** on first use.
 - Do NOT cite sources in parens. This is exam prep, not a literature review.
@@ -81,7 +83,41 @@ ANSWER:"""
 
 THEORY_ANSWER_PROMPT = """You are an MBBS ({display}) theory answer writer for NEET PG and university exams. Reference: {reference_text}.
 
-Write a {marks}-mark exam answer of about {word_count_target} words in point form (headings + bullets) — AIM for {word_count_target} words, hard ceiling {upper_words}. This is the length expected for {marks} marks, so cover the whole question: definition, key points, significance, Indian context (programmes/data), and a Conclusion. A table or flowchart is EXTRA — it does NOT count toward the {word_count_target}-word target and must not make you shorten the written explanation. Be concise (exam prep, not a textbook), avoid repetition, and write the Conclusion before the word ceiling. Do not pad.
+Write a {marks}-mark exam answer in point form (headings + bullets).
+
+## LENGTH BAND (mandatory — non-negotiable)
+- TARGET: **{word_count_target} words** (count only your answer text, not tables/DOT diagrams).
+- HARD MINIMUM: **{lower_words} words**. Do NOT stop early. If you are under {lower_words}, add more on-topic bullets under the existing headings (detail, Indian context, examples from SOURCE MATERIAL) — never invent schemes to pad.
+- HARD MAXIMUM: **{upper_words} words**. This is a hard stop — stop body content before the ceiling and write Conclusion. Never aim past the maximum to "be thorough."
+- Prefer the middle of the band ({word_count_target} ± 10%). Hitting only ~50% of a 10-mark target is FAILED. Exceeding {upper_words} is also FAILED (for both 5-mark and 10-mark).
+- Do NOT fill space with endless bullets. Depth means better bullets on the asked topic, not more unrelated programmes.
+- A table or flowchart is EXTRA and does NOT count toward the word target; it must not replace the written explanation.
+
+## SCOPE CONTROL (mandatory — quality over completeness)
+- Answer ONLY what the question asks. Do not expand into a full chapter, full RMNCH laundry list, or related programmes unless the question explicitly asks for them.
+- If the question is narrow (e.g. "objectives of ANC", "definition of …", "components of …"), stay inside that narrow ask. Do NOT add unrelated schemes, levels of care, or entire programme reviews.
+- Do NOT invent or pad with programmes that are only loosely related to the stem.
+- Mark structure rules (still obey the LENGTH BAND above):
+  - 3-mark: VERY short structure — 3-5 crisp bullets, no long intro, no separate Conclusion unless needed. ~{word_count_target} words total.
+  - 5-mark: **STRICT COMPACT** — this is NOT a 10-mark essay.
+    - At most **2–3 short headings** total + optional **one-line** Conclusion.
+    - Prefer **6–10 bullets total** (not 20+). Sub-bullets only when essential.
+    - No "Challenges", "Future Directions", "National Programmes", "Indian Context and Data", or "Strategic Interventions for Newborn Survival" sections unless the stem asks for them.
+    - No digression into labour/newborn/EmOC stats unless the stem is about those topics.
+    - For list stems ("objectives", "elements", "components"): enumerate the list; do NOT add a second half-chapter of programmes/data.
+    - Hard stop: do not exceed **{upper_words} words**. Prefer finishing at ~{word_count_target} words.
+  - 10-mark: **full depth within the band** — **4–6 headings**, several bullets each, Indian context when relevant, ending in Conclusion. Multi-part stems (a/b/c) need a balanced section per part. ~{word_count_target} words total — do not write a 5-mark answer for a 10-mark stem.
+    - Even open stems ("services under RCH-II", "discuss …") must stop by **{upper_words}**. Cap at **~15–25 bullets total**, not 50–100.
+    - Cover the asked concept thoroughly; do **not** append a laundry list of every NHM/newborn/HIV/WASH/FP programme unless the stem asks for those topics.
+    - Prefer 2–4 named schemes that appear in SOURCE MATERIAL over a long catalogue.
+    - When you have covered definition + key services/components + brief Indian context + conclusion, **STOP**.
+
+## HARD GROUNDING (mandatory — no fabrication)
+- Name a specific scheme, programme, law, act, guideline, or statistic ONLY if it appears in the SOURCE MATERIAL below, OR it is a universally standard textbook fact (e.g. WHO definition of health, basic epidemiological triad).
+- If a name is not supported by SOURCE MATERIAL and is not a universal standard fact, describe generically ("a national maternity benefit scheme") — never invent a name or acronym.
+- NEVER use non-Indian programmes (e.g. US PRAMS, Medicaid, Medicare) for Indian MBBS answers.
+- Never invent numbers. If unsure of a figure, describe the trend qualitatively.
+- Prefer SOURCE MATERIAL over memory when they conflict.
 
 FORMAT (point form — NO long paragraphs):
 - Use "•" bullets (~10-25 words each, one idea per bullet).
@@ -100,22 +136,17 @@ STRUCTURE — this is important: organise the answer under SHORT SECTION HEADING
 - Under each heading, give the relevant "•" bullet points.
 - {answer_structure}
 
-For 3-mark questions: VERY short — just 3-5 crisp bullets (~100-150 words total), no long introduction and no separate Conclusion.
-For 5-mark questions: keep it tight — 2-3 headings and a short Conclusion.
-For 10-mark questions: 4-6 headings, each with several bullets, ending in a Conclusion.
-
 STYLE:
 - "X is ..." for definitions (no source citation).
 - Use **bold** category names in classifications, then enumerate.
-- For statistics: cite the year and source naturally ("IMR is 28/1000 live births (SRS 2020)").
 - Address parts (a, b, c) of a question in clear sub-sections.
 - Subject-specific framework: {framework}.
-- Indian context: {indian_context}.
+- Indian context (only if relevant to the stem): {indian_context}.
 - Key authoritative sources (use without parenthetical citation): {key_sources}.
-- Start directly with the first bullet. No preamble.
+- Start directly with the first section or bullet. No preamble.
 - End your answer with a final bullet summarizing the key takeaway (no extra footer text).
 
-SOURCE MATERIAL (use only what's relevant):
+SOURCE MATERIAL (use only what's relevant; this is your grounding evidence):
 ---
 {retrieved_chunks}
 ---

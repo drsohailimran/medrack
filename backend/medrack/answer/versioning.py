@@ -45,6 +45,7 @@ REASON_RERANKER_DRIFT = "reranker_version_drift"
 REASON_WORD_COUNT_DRIFT = "target_word_count_drift"
 REASON_EMBEDDING_MODEL_DRIFT = "embedding_model_drift"
 REASON_MISSING_VERSIONS = "missing_versions_field"
+REASON_KB_REINDEXED = "kb_reindexed"
 
 
 def _safe_get(d: dict, *keys: str, default: Any = None) -> Any:
@@ -112,6 +113,30 @@ def is_stale(cached: dict) -> tuple[bool, list[str]]:
     cached_emb = cached.get("embedding_model")
     if cached_emb is not None and cached_emb != config.EMBEDDING_MODEL:
         reasons.append(REASON_EMBEDDING_MODEL_DRIFT)
+
+    # P0: per-subject KB revision. When a book for this subject is
+    # re-ingested, bump_kb_revision(subject) runs; answers generated
+    # against an older revision are stale (grounding corpus changed).
+    subject = cached.get("module_subject")
+    if subject:
+        try:
+            from medrack.answer.kb_revision import get_kb_revision
+
+            current_rev = get_kb_revision(str(subject))
+            cached_rev = cached.get("kb_revision")
+            if cached_rev is None:
+                # Pre-P0 cache: only stale if the subject has been
+                # re-indexed at least once after P0 landed.
+                if current_rev > 0:
+                    reasons.append(REASON_KB_REINDEXED)
+            else:
+                try:
+                    if int(cached_rev) != int(current_rev):
+                        reasons.append(REASON_KB_REINDEXED)
+                except (TypeError, ValueError):
+                    reasons.append(REASON_KB_REINDEXED)
+        except Exception:  # noqa: BLE001 — never break load_answer
+            logger.debug("kb_revision check failed", exc_info=True)
 
     return (bool(reasons), reasons)
 
@@ -210,4 +235,5 @@ __all__ = [
     "REASON_WORD_COUNT_DRIFT",
     "REASON_EMBEDDING_MODEL_DRIFT",
     "REASON_MISSING_VERSIONS",
+    "REASON_KB_REINDEXED",
 ]

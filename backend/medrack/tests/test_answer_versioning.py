@@ -100,11 +100,11 @@ def test_is_stale_flags_renderer_version_drift():
 def test_is_stale_does_not_flag_unimplemented_components():
     """Components at version 0 (not yet implemented) should not be flagged."""
     answer = _fresh_answer()
-    # planner/validator/reranker are at 0 in the current config; an
-    # old cache that didn't record them should not flag.
+    # planner/reranker remain at 0; validator is implemented (P0, v1).
+    # Omitting still-zero components must not mark the answer stale.
     answer["versions"] = {
         k: v for k, v in config.PIPELINE_VERSIONS.items()
-        if k not in ("planner", "validator", "reranker")
+        if k not in ("planner", "reranker")
     }
     stale, reasons = is_stale(answer)
     assert stale is False, f"unexpectedly stale: {reasons}"

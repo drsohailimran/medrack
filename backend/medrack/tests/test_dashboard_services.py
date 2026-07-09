@@ -119,7 +119,7 @@ def test_question_service_generate_propagates_question_type():
     captured: dict = {}
 
     def fake_generate_answer(*, module_name, subject, chapter, question, llm_client,
-                            force_regenerate=False, marks=None, word_count_target=None):
+                            force_regenerate=False, marks=None):
         captured["question"] = dict(question)
         captured["module_name"] = module_name
         captured["subject"] = subject
@@ -169,7 +169,7 @@ def test_question_service_generate_default_question_type_is_theory():
     captured: dict = {}
 
     def fake_generate_answer(*, module_name, subject, chapter, question, llm_client,
-                            force_regenerate=False, marks=None, word_count_target=None):
+                            force_regenerate=False, marks=None):
         captured["type"] = question.get("type")
         return {"ok": True, "answer_text": "OK", "pdf_path": None, "tokens": 0}
 

@@ -13,6 +13,10 @@ single uvicorn process, so a module-level singleton is sufficient — no
 Redis/Celery needed. Jobs are ephemeral; they live for the lifetime of
 the process (a completed job's PDF is persisted on disk under
 ``$MEDRACK_HOME/output`` regardless).
+
+P3: jobs support cooperative cancel via ``request_cancel``. Long steps
+(e.g. a single LLM completion) finish the current unit first; the next
+question is skipped.
 """
 from __future__ import annotations
 
@@ -38,11 +42,12 @@ class Job:
 
     id: str
     kind: str
-    status: str = "pending"  # pending | running | done | error
+    status: str = "pending"  # pending | running | done | error | cancelled
     percent: float = 0.0
     message: str = ""
     result: Optional[dict] = None
     error: Optional[str] = None
+    cancel_requested: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -59,6 +64,7 @@ class Job:
             "message": self.message,
             "result": self.result,
             "error": self.error,
+            "cancel_requested": self.cancel_requested,
         }
 
 
@@ -79,12 +85,33 @@ class JobRegistry:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def request_cancel(self, job_id: str) -> Optional[Job]:
+        """Cooperatively cancel a pending/running job.
+
+        Returns the job if found and cancel was recorded, else None.
+        Already-terminal jobs are returned as-is without changing status.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.status in ("done", "error", "cancelled"):
+                return job
+            job.cancel_requested = True
+            job.message = job.message or "Stopping…"
+            job.updated_at = time.time()
+            return job
+
     def run(self, kind: str, target: JobBody) -> Job:
         """Create a job and run ``target`` on a daemon thread.
 
         ``target`` receives ``(job, progress)`` and returns a result
         dict. It should call ``progress(percent, message)`` to report
         live progress. Exceptions are captured onto the job.
+
+        If the body returns cancelled=True or the job's cancel_requested
+        flag is set when the body finishes, the job status becomes
+        ``cancelled`` (terminal).
         """
         job = self.create(kind)
 
@@ -100,9 +127,17 @@ class JobRegistry:
             try:
                 result = target(job, progress)
                 job.result = result or {}
-                job.percent = 100.0
-                job.status = "done"
-                job.message = job.message or "Done"
+                cancelled = bool(job.cancel_requested) or bool(
+                    job.result.get("cancelled")
+                )
+                if cancelled:
+                    job.result["cancelled"] = True
+                    job.status = "cancelled"
+                    job.message = job.message or "Stopped"
+                else:
+                    job.percent = 100.0
+                    job.status = "done"
+                    job.message = job.message or "Done"
             except Exception as exc:  # noqa: BLE001 - surface any failure to the client
                 logger.exception("Job %s (%s) failed", job.id, kind)
                 job.error = str(exc)

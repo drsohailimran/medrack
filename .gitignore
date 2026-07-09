@@ -50,3 +50,9 @@ bunfig.toml
 *.swp
 .DS_Store
 Thumbs.db
+
+# ───────────────────────── Windows OCR runtime ────────────────────────────
+windows/ocr/venv/
+windows/ocr/jobs/
+windows/ocr/*.log
+windows/ocr/**/__pycache__/

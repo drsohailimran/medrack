@@ -257,7 +257,7 @@ export type LogName = "ingestion" | "generation" | "validation" | "benchmark";
 export type LogEntry = Record<string, unknown>;
 
 // --- Async jobs (book ingest, question-bank extract, solve bank) ---
-export type JobStatusValue = "pending" | "running" | "done" | "error";
+export type JobStatusValue = "pending" | "running" | "done" | "error" | "cancelled";
 
 export interface JobStatus {
   schema_version: 1;
@@ -268,6 +268,29 @@ export interface JobStatus {
   message: string;
   result: Record<string, unknown> | null;
   error: string | null;
+  cancel_requested?: boolean;
+}
+
+/** Summary of one answer produced during a solve job (for keep/delete review). */
+export interface SolveAnswerSummary {
+  qid: string;
+  question_text?: string;
+  module?: string;
+  chapter?: string;
+  cache_hit?: boolean;
+  needs_review?: boolean;
+  word_count?: number;
+}
+
+export interface LlmStatus {
+  schema_version: 1;
+  mode: string;
+  provider: string;
+  model: string;
+  base_url: string;
+  online: boolean;
+  detail: string;
+  latency_ms: number | null;
 }
 
 // The immediate response when starting an async job.

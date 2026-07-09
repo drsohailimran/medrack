@@ -1,0 +1,60 @@
+{
+  "_doc": "P0 quality regression pack. Deterministic fixture cases for scope/grounding/truncation validators. NOT a live LLM benchmark — unit rules must pass on these fixtures.",
+  "_version": 1,
+  "_created": "2026-07-09",
+  "cases": [
+    {
+      "id": "p0-prams-fail",
+      "expect_pass": false,
+      "expect_failed_rules_any": ["GroundingRule"],
+      "marks": 5,
+      "subject": "psm",
+      "source_text": "ANC includes early registration, BP, weight, IFA, TT, birth preparedness. JSY supports institutional delivery.",
+      "answer_text": "Programmes\n• Use PRAMS (Pregnancy Risk Assessment Monitoring System) for risk scoring in India.\n• Give IFA tablets.\n"
+    },
+    {
+      "id": "p0-ashwini-fail",
+      "expect_pass": false,
+      "expect_failed_rules_any": ["GroundingRule"],
+      "marks": 5,
+      "subject": "psm",
+      "source_text": "JSY and JSSK are maternal health schemes under NHM.",
+      "answer_text": "Schemes\n• Ashwini Health Yojana provides free ambulance transport.\n"
+    },
+    {
+      "id": "p0-jsy-pass",
+      "expect_pass": true,
+      "marks": 3,
+      "subject": "psm",
+      "source_text": "Janani Suraksha Yojana (JSY) provides cash assistance for institutional delivery under NHM.",
+      "answer_text": "Objectives\n• Early registration of pregnancy in the first trimester supports baseline risk assessment and planning of care.\n• Risk screening includes blood pressure, anaemia, and review of prior obstetric complications at each visit.\n• Iron and folic acid supplementation with tetanus toxoid immunization are delivered as scheduled preventive care.\n• Promote institutional delivery via JSY cash assistance under NHM for eligible mothers choosing facility birth.\n• Counsel on danger signs, nutrition, and early postnatal follow-up before discharge planning begins.\n"
+    },
+    {
+      "id": "p0-10mark-underlength-fail",
+      "expect_pass": false,
+      "expect_failed_rules_any": ["ScopeLengthRule"],
+      "marks": 10,
+      "subject": "psm",
+      "source_text": "Essential obstetric care includes skilled attendance and referral.",
+      "answer_text": "Definition\n• Essential obstetric care is basic maternity service at primary level.\n• It includes skilled birth attendance only.\n"
+    },
+    {
+      "id": "p0-3mark-scope-fail",
+      "expect_pass": false,
+      "expect_failed_rules_any": ["ScopeLengthRule"],
+      "marks": 3,
+      "subject": "psm",
+      "source_text": "ANC objectives are early registration and screening.",
+      "answer_text": "WORD_PAD"
+    },
+    {
+      "id": "p0-truncation-fail",
+      "expect_pass": false,
+      "expect_failed_rules_any": ["TruncationRule"],
+      "marks": 5,
+      "subject": "psm",
+      "source_text": "Health definition.",
+      "answer_text": "Health includes physical mental and"
+    }
+  ]
+}

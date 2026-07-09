@@ -86,6 +86,12 @@ class BatchResult:
     elapsed_seconds:
         Wall-clock duration of the batch as measured by
         :func:`time.perf_counter`.
+    cancelled:
+        True if the batch stopped early because ``cancel_check`` returned
+        True (P3 stop-generation). Partial ``answers`` are still valid.
+    questions_skipped:
+        Number of filtered questions not attempted because the batch was
+        cancelled mid-run.
     """
 
     module_name: str
@@ -100,6 +106,8 @@ class BatchResult:
     total_tokens: int = 0
     total_latency_seconds: float = 0.0
     elapsed_seconds: float = 0.0
+    cancelled: bool = False
+    questions_skipped: int = 0
 
 
 def _passes_chapter_filter(question: dict, chapter_filter: str | None) -> bool:
@@ -126,6 +134,7 @@ def generate_full_batch(
     progress=None,
     marks: int | None = None,
     word_targets: dict | None = None,
+    cancel_check=None,
 ) -> BatchResult:
     """Generate answers for every question in the list, returning a BatchResult.
 
@@ -200,8 +209,24 @@ def generate_full_batch(
     total_tokens = 0
     total_latency_seconds = 0.0
     chapters_seen: set[str] = set()
+    cancelled = False
+    questions_skipped = 0
 
     for _idx, question in enumerate(filtered):
+        # P3: cooperative cancel between questions (current LLM call still finishes).
+        if cancel_check is not None:
+            try:
+                if cancel_check():
+                    cancelled = True
+                    questions_skipped = len(filtered) - _idx
+                    logger.info(
+                        "Batch cancelled after %s/%s questions (module=%s)",
+                        _idx, len(filtered), module_name,
+                    )
+                    break
+            except Exception:  # noqa: BLE001 - cancel_check must never break the batch
+                pass
+
         # Report progress at the top so every path (cache hit, generate,
         # failure) is counted uniformly. Reports questions completed so far.
         if progress is not None:
@@ -269,9 +294,15 @@ def generate_full_batch(
         total_tokens += int(answer.get("total_tokens") or 0)
         total_latency_seconds += float(answer.get("latency_seconds") or 0.0)
 
-    if progress is not None:
+    if progress is not None and not cancelled:
         try:
             progress(len(filtered), len(filtered))
+        except Exception:  # noqa: BLE001
+            pass
+    elif progress is not None and cancelled:
+        try:
+            done_count = len(answers) + questions_failed
+            progress(done_count, len(filtered))
         except Exception:  # noqa: BLE001
             pass
 
@@ -292,6 +323,8 @@ def generate_full_batch(
         total_tokens=total_tokens,
         total_latency_seconds=total_latency_seconds,
         elapsed_seconds=elapsed,
+        cancelled=cancelled,
+        questions_skipped=questions_skipped,
     )
 
 

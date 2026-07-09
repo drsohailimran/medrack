@@ -12,4 +12,7 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Ubuntu production serves with: node .output/server/index.mjs
+  // Default lovable preset is cloudflare-module (breaks plain node).
+  nitro: { preset: "node-server" },
 });

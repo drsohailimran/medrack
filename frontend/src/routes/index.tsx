@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   CheckCircle2,
@@ -10,6 +10,8 @@ import {
   Play,
   RotateCcw,
   Sparkles,
+  Square,
+  Trash2,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -19,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useJob } from "@/lib/use-job";
-import type { GenerationResult, Marks, Subject } from "@/lib/api";
+import type { GenerationResult, Marks, SolveAnswerSummary, Subject } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -61,9 +63,9 @@ const SELECT_CLS =
 function Workspace() {
   const [bankName, setBankName] = useState("");
   const [bookId, setBookId] = useState("");
-  const [words10, setWords10] = usePersistedNumber("medrack:words10", 750);
-  const [words5, setWords5] = usePersistedNumber("medrack:words5", 375);
-  const [words3, setWords3] = usePersistedNumber("medrack:words3", 125);
+  const [words10, setWords10] = usePersistedNumber("medrack:words10_v2", 750);
+  const [words5, setWords5] = usePersistedNumber("medrack:words5_v2", 375);
+  const [words3, setWords3] = usePersistedNumber("medrack:words3_v2", 125);
   // Which marks to produce, and which chapters — default: everything.
   const [selMarks, setSelMarks] = useState<Set<number>>(() => new Set([10, 5, 3]));
   const [selChapters, setSelChapters] = useState<Set<string>>(() => new Set());
@@ -71,7 +73,15 @@ function Workspace() {
   const [error, setError] = useState<string | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [downloadingSolved, setDownloadingSolved] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  // P3 keep/delete review after cancel (or full solve).
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewAnswers, setReviewAnswers] = useState<SolveAnswerSummary[]>([]);
+  const [reviewModule, setReviewModule] = useState("");
+  const [selectedDelete, setSelectedDelete] = useState<Set<string>>(() => new Set());
+  const [reviewBusy, setReviewBusy] = useState(false);
   const autoDownload = useRef(false);
+  const qc = useQueryClient();
 
   const { data: banks } = useQuery({
     queryKey: ["question-banks"],
@@ -216,21 +226,119 @@ function Workspace() {
     }
   };
 
+  // Open keep/delete review when a solve finishes or is cancelled.
+  const openReviewFromJob = () => {
+    const r = (solve.job?.result ?? {}) as {
+      answers?: SolveAnswerSummary[];
+      module?: string;
+      bank_name?: string;
+    };
+    const list = Array.isArray(r.answers) ? r.answers : [];
+    setReviewAnswers(list);
+    setReviewModule(r.module || bankName || "");
+    setSelectedDelete(new Set());
+    setReviewOpen(list.length > 0);
+    setStopping(false);
+  };
+
   // Auto-download once when a solve finishes (only if started this session,
   // so a page reload that resumes a finished job doesn't re-download).
+  // On cancel: open keep/delete review instead of auto-download.
   useEffect(() => {
     if (solve.job?.status === "done" && autoDownload.current) {
       autoDownload.current = false;
       void downloadSolvedPdf();
+      openReviewFromJob();
+    } else if (solve.job?.status === "cancelled") {
+      autoDownload.current = false;
+      openReviewFromJob();
     } else if (solve.job?.status === "error") {
+      setStopping(false);
       setError(solve.job.error ?? "Solving the module failed.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solve.job?.status]);
 
-  const solving = solve.job != null && solve.job.status !== "done" && solve.job.status !== "error";
+  const solving =
+    solve.job != null &&
+    solve.job.status !== "done" &&
+    solve.job.status !== "error" &&
+    solve.job.status !== "cancelled";
   const solveDone = solve.job?.status === "done";
-  const solvedInfo = (solve.job?.result ?? {}) as { answered?: number; questions_total?: number };
+  const solveCancelled = solve.job?.status === "cancelled";
+  const solvedInfo = (solve.job?.result ?? {}) as {
+    answered?: number;
+    questions_total?: number;
+    skipped?: number;
+    cancelled?: boolean;
+  };
+
+  const handleStopSolve = async () => {
+    setStopping(true);
+    setError(null);
+    await solve.cancel();
+  };
+
+  const toggleDeleteQid = (qid: string) => {
+    setSelectedDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(qid)) next.delete(qid);
+      else next.add(qid);
+      return next;
+    });
+  };
+
+  const deleteSelectedAnswers = async () => {
+    if (selectedDelete.size === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedDelete.size} cached answer(s)? They will be regenerated next time you solve.`,
+      )
+    ) {
+      return;
+    }
+    setReviewBusy(true);
+    try {
+      for (const qid of selectedDelete) {
+        const row = reviewAnswers.find((a) => a.qid === qid);
+        await api.deleteCacheEntry(qid, row?.module || reviewModule || undefined);
+      }
+      setReviewAnswers((rows) => rows.filter((a) => !selectedDelete.has(a.qid)));
+      setSelectedDelete(new Set());
+      void qc.invalidateQueries({ queryKey: ["cache-entries"] });
+      void qc.invalidateQueries({ queryKey: ["cache-status"] });
+    } catch (e) {
+      setError(`Delete failed: ${(e as Error).message}`);
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const deleteAllReviewed = async () => {
+    if (reviewAnswers.length === 0) return;
+    if (
+      !confirm(
+        `Delete all ${reviewAnswers.length} answers from this run? They will be regenerated next time you solve.`,
+      )
+    ) {
+      return;
+    }
+    setReviewBusy(true);
+    try {
+      for (const a of reviewAnswers) {
+        await api.deleteCacheEntry(a.qid, a.module || reviewModule || undefined);
+      }
+      setReviewAnswers([]);
+      setSelectedDelete(new Set());
+      setReviewOpen(false);
+      void qc.invalidateQueries({ queryKey: ["cache-entries"] });
+      void qc.invalidateQueries({ queryKey: ["cache-status"] });
+    } catch (e) {
+      setError(`Delete failed: ${(e as Error).message}`);
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   const downloadPreviewPdf = async () => {
     if (!result?.answer_text) return;
@@ -452,7 +560,30 @@ function Workspace() {
               )}
             </Button>
             {solving && solve.job && (
-              <ProgressBar percent={solve.job.percent} label={solve.job.message || "Solving…"} />
+              <div className="space-y-2">
+                <ProgressBar percent={solve.job.percent} label={solve.job.message || "Solving…"} />
+                <Button
+                  variant="outline"
+                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+                  onClick={() => void handleStopSolve()}
+                  disabled={stopping || !!solve.job.cancel_requested}
+                >
+                  {stopping || solve.job.cancel_requested ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Stopping after current
+                      question…
+                    </>
+                  ) : (
+                    <>
+                      <Square className="mr-2 h-3.5 w-3.5 fill-current" /> Stop generation
+                    </>
+                  )}
+                </Button>
+                <p className="text-[10px] text-muted-foreground">
+                  Stop finishes the question in progress, then lets you keep or delete answers so
+                  far.
+                </p>
+              </div>
             )}
             {solveDone && (
               <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-[12px] text-success">
@@ -460,16 +591,57 @@ function Workspace() {
                   Module solved — {solvedInfo.answered ?? "?"}/{solvedInfo.questions_total ?? "?"}{" "}
                   answered.
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full"
-                  onClick={downloadSolvedPdf}
-                  disabled={downloadingSolved}
-                >
-                  <Download className="mr-1.5 h-3.5 w-3.5" />
-                  {downloadingSolved ? "Downloading…" : "Download Again"}
-                </Button>
+                <div className="flex flex-col gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={downloadSolvedPdf}
+                    disabled={downloadingSolved}
+                  >
+                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                    {downloadingSolved ? "Downloading…" : "Download Again"}
+                  </Button>
+                  {reviewAnswers.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => setReviewOpen(true)}
+                    >
+                      Review keep / delete
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+            {solveCancelled && (
+              <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[12px] text-foreground">
+                <div className="mb-1.5 font-medium text-warning">
+                  Stopped — {solvedInfo.answered ?? "?"} of {solvedInfo.questions_total ?? "?"}{" "}
+                  answered
+                  {solvedInfo.skipped ? ` · ${solvedInfo.skipped} skipped` : ""}.
+                </div>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  Review answers below. Keep them for next time, or delete ones you do not want.
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {(solve.job?.result as { pdf_path?: string } | null)?.pdf_path ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full"
+                      onClick={downloadSolvedPdf}
+                      disabled={downloadingSolved}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" />
+                      {downloadingSolved ? "Downloading…" : "Download partial PDF"}
+                    </Button>
+                  ) : null}
+                  <Button size="sm" className="w-full" onClick={() => setReviewOpen(true)}>
+                    Review keep / delete
+                  </Button>
+                </div>
               </div>
             )}
             {error && (
@@ -479,6 +651,94 @@ function Workspace() {
             )}
           </div>
         </aside>
+
+        {/* P3: keep/delete review modal after stop or full solve */}
+        {reviewOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => !reviewBusy && setReviewOpen(false)}
+          >
+            <div
+              className="surface-card flex max-h-[88vh] w-full max-w-xl flex-col p-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="border-b border-border px-5 py-3">
+                <h2 className="font-display text-base font-semibold">Review answers</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {reviewAnswers.length} answer
+                  {reviewAnswers.length === 1 ? "" : "s"} from this run
+                  {reviewModule ? ` · module ${reviewModule}` : ""}. Unchecked = keep. Checked =
+                  delete from cache.
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+                {reviewAnswers.length === 0 ? (
+                  <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                    No answers left in this review. All kept or already deleted.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {reviewAnswers.map((a) => (
+                      <li key={a.qid}>
+                        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 hover:bg-surface-2">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={selectedDelete.has(a.qid)}
+                            onChange={() => toggleDeleteQid(a.qid)}
+                            disabled={reviewBusy}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm">
+                              {a.question_text || a.qid}
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                              <span className="font-mono">{a.qid}</span>
+                              {a.word_count != null ? <span>· {a.word_count} w</span> : null}
+                              {a.cache_hit ? <span>· cache</span> : <span>· new</span>}
+                              {a.needs_review ? <span className="text-warning">· needs review</span> : null}
+                            </div>
+                          </div>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  disabled={reviewBusy || reviewAnswers.length === 0}
+                  onClick={() => void deleteAllReviewed()}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete all
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={reviewBusy}
+                    onClick={() => setReviewOpen(false)}
+                  >
+                    Keep remaining
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewBusy || selectedDelete.size === 0}
+                    onClick={() => void deleteSelectedAnswers()}
+                  >
+                    {reviewBusy
+                      ? "Working…"
+                      : `Delete selected (${selectedDelete.size})`}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* CENTER: preview */}
         <section className="flex flex-col lg:min-h-0">

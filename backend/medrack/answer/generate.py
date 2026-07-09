@@ -269,17 +269,22 @@ def generate_answer(
     question_text = question["question_text"]
 
     # Step 1: cache lookup (unless force_regenerate).
+    # P0: if the cached answer is stale (pipeline drift or KB reindex),
+    # fall through and regenerate instead of serving outdated text.
     if not force_regenerate:
         cached = load_answer(module_name, chapter, qid)
-        if cached is not None:
+        if cached is not None and not cached.get("stale"):
             logger.info(
                 "Cache hit: module=%s chapter=%s qid=%s",
                 module_name, chapter, qid,
             )
-            # Stage 2.5 will add a _cache_key mismatch check here. For
-            # A5, any cached entry is treated as valid.
             cached["cache_hit"] = True
             return cached
+        if cached is not None and cached.get("stale"):
+            logger.info(
+                "Cache stale (reasons=%s); regenerating: module=%s chapter=%s qid=%s",
+                cached.get("stale_reasons"), module_name, chapter, qid,
+            )
 
     # Step 2: embed the question text.
     logger.info(
@@ -335,7 +340,19 @@ def generate_answer(
     # without the allowance a diagram would truncate the written explanation.
     # The allowance covers roughly two tables + a flowchart. ~750 words ->
     # ~1550 tokens; ~375 words -> ~1025 tokens.
-    max_out = int((target_word_count or 500) * 1.4) + 500
+    # Budget tokens for the length band (P0.4).
+    # Cap output near HARD MAXIMUM so the model cannot fill ~1900 tokens
+    # and produce 1100+ word 10-mark laundry lists (seen on open EOC stems).
+    # ~1.25–1.35 tokens/word is enough for point-form bullets + headings.
+    _tw = target_word_count or 500
+    _marks_i = int(marks) if marks is not None else (10 if _tw >= 500 else 5)
+    if _marks_i <= 5 or _tw <= 400:
+        # 5/3-mark: hard stop near upper band (~1.1 × target)
+        max_out = int(_tw * 1.20) + 200
+    else:
+        # 10-mark: budget for ~upper_words (1.1×target), not 1.5×target essays
+        # 750 → ~825 words max ≈ ~1100–1200 tokens with headroom
+        max_out = int(_tw * 1.35) + 150  # 750 → ~1162 tokens (was ~1900)
     llm_response = llm_client.complete(build_result.prompt, max_output_tokens=max_out)
 
     # Build the cache key. Phase 3: includes PIPELINE_VERSIONS, subject,
@@ -353,7 +370,7 @@ def generate_answer(
         target_word_count=target_word_count,
     )
 
-    # Step 6: assemble the answer dict, save to cache, return.
+    # Step 6: assemble the answer dict.
     answer = build_answer_dict(
         question=question,
         module_name=module_name,
@@ -366,10 +383,66 @@ def generate_answer(
         cache_key=cache_key,
         target_word_count=target_word_count,
     )
+
+    # P0: record the KB revision this answer was grounded on.
+    try:
+        from medrack.answer.kb_revision import get_kb_revision
+        answer["kb_revision"] = get_kb_revision(subject)
+    except Exception:  # noqa: BLE001
+        answer["kb_revision"] = 0
+
+    # P0: validation gate (does NOT rewrite the answer; attaches a report).
+    # FAIL → needs_review=True. Answer is still cached so overnight runs
+    # are not blocked, but the UI / operator can filter on needs_review.
+    try:
+        from medrack.validation.pipeline import ValidationPipeline
+
+        source_text = "\n\n".join(chunk_texts)
+        # Prefer explicit marks arg; fall back to question field.
+        v_marks = marks
+        if v_marks is None:
+            v_marks = question.get("marks")
+        report = ValidationPipeline().validate(
+            answer["answer_text"],
+            blueprint=None,
+            context={
+                "source_text": source_text,
+                "question_text": question_text,
+                "marks": v_marks,
+                "subject": subject,
+                "target_word_count": target_word_count,
+            },
+        )
+        answer["validation"] = report.to_dict()
+        answer["needs_review"] = not report.pass_
+        if answer["needs_review"]:
+            logger.warning(
+                "Validation FAIL for qid=%s failed_rules=%s score=%.2f",
+                qid, report.failed_rules, report.score,
+            )
+        else:
+            logger.info(
+                "Validation PASS for qid=%s score=%.2f",
+                qid, report.score,
+            )
+    except Exception:  # noqa: BLE001 — never block generation on validator bugs
+        logger.exception("Validation pipeline failed for qid=%s", qid)
+        answer["validation"] = {
+            "schema_version": 1,
+            "pass": True,
+            "score": 1.0,
+            "results": [],
+            "failed_rules": [],
+            "warnings": [],
+            "informational_messages": ["validator_error_skipped"],
+        }
+        answer["needs_review"] = False
+
     save_answer(module_name, chapter, qid, answer)
     logger.info(
-        "Saved answer: module=%s chapter=%s qid=%s tokens=%d",
+        "Saved answer: module=%s chapter=%s qid=%s tokens=%d needs_review=%s",
         module_name, chapter, qid, answer["total_tokens"],
+        answer.get("needs_review"),
     )
     return answer
 

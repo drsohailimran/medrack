@@ -11,6 +11,8 @@ import type { JobStatus } from "@/lib/api";
 // progress bar (and, for solves, the finished result) survive a refresh.
 // A resumed job whose id the server no longer knows (e.g. the backend was
 // restarted) is dropped silently instead of showing a spurious error.
+//
+// P3: cancel() cooperatively stops a running job after the current unit.
 export function useJob(storageKey?: string) {
   const [job, setJob] = useState<JobStatus | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -38,6 +40,9 @@ export function useJob(storageKey?: string) {
     setJob(null);
   }, [stop, clearStorage]);
 
+  const isTerminal = (status: string) =>
+    status === "done" || status === "error" || status === "cancelled";
+
   const poll = useCallback(
     (jobId: string, isResume: boolean) => {
       stop();
@@ -49,7 +54,7 @@ export function useJob(storageKey?: string) {
           misses = 0;
           settledOnce = true;
           setJob(s);
-          if (s.status === "done" || s.status === "error") stop();
+          if (isTerminal(s.status)) stop();
         } catch {
           // A resumed job that can't be fetched on the first attempt was
           // almost certainly lost to a server restart — drop it quietly.
@@ -98,6 +103,34 @@ export function useJob(storageKey?: string) {
     [poll, storageKey],
   );
 
+  const cancel = useCallback(async () => {
+    const id = job?.job_id;
+    if (!id) return;
+    try {
+      await api.cancelJob(id);
+      setJob((cur) =>
+        cur
+          ? {
+              ...cur,
+              cancel_requested: true,
+              message: cur.message?.includes("Stopping")
+                ? cur.message
+                : "Stopping after current question…",
+            }
+          : cur,
+      );
+    } catch (e) {
+      setJob((cur) =>
+        cur
+          ? {
+              ...cur,
+              error: `Stop failed: ${(e as Error).message}`,
+            }
+          : cur,
+      );
+    }
+  }, [job?.job_id]);
+
   // Resume a persisted job after a page reload.
   useEffect(() => {
     if (!storageKey) return;
@@ -125,5 +158,5 @@ export function useJob(storageKey?: string) {
 
   useEffect(() => () => stop(), [stop]);
 
-  return { job, start, stop, reset };
+  return { job, start, stop, reset, cancel };
 }

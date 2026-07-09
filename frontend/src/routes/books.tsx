@@ -39,6 +39,8 @@ function BooksPage() {
   const [importTitle, setImportTitle] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [replaceExisting, setReplaceExisting] = useState(false);
+  const [hybridOcr, setHybridOcr] = useState(true);
+  const [useMarker, setUseMarker] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const ingest = useJob("medrack:ingestJob");
@@ -51,6 +53,8 @@ function BooksPage() {
         subject: importSubject,
         title: importTitle.trim() || importFile.name.replace(/\.pdf$/i, ""),
         replace: replaceExisting,
+        hybrid_ocr: hybridOcr,
+        use_marker: useMarker,
       });
     },
     onSuccess: (handle) => {
@@ -193,6 +197,32 @@ function BooksPage() {
                 />
                 Replace if this book is already in the knowledge base
               </label>
+              <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={hybridOcr}
+                  onChange={(e) => setHybridOcr(e.target.checked)}
+                  disabled={busy}
+                />
+                <span>
+                  <span className="font-medium text-foreground">Hybrid OCR (recommended for scans)</span>
+                  {" — "}
+                  one click: <strong>stop Qwopus</strong> → RapidOCR →{" "}
+                  <strong>validate quality</strong> → full text PDF →{" "}
+                  <strong>start Qwopus</strong> → index into the library. Use{" "}
+                  <strong>Start MedRack</strong> so the OCR agent is running on this PC.
+                </span>
+              </label>
+              <label className="flex items-center gap-2 pl-6 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={useMarker}
+                  onChange={(e) => setUseMarker(e.target.checked)}
+                  disabled={busy || !hybridOcr}
+                />
+                Also run Marker on table-heavy ranges (slower; better tables)
+              </label>
             </div>
             {ingesting && ingest.job && (
               <div className="mt-4">
@@ -220,7 +250,13 @@ function BooksPage() {
                 {ingesting ? "Close" : "Cancel"}
               </Button>
               <Button onClick={() => importMutation.mutate()} disabled={busy || !importFile}>
-                {busy ? "Ingesting…" : "Upload & ingest"}
+                {busy
+                  ? hybridOcr
+                    ? "OCR + ingest…"
+                    : "Ingesting…"
+                  : hybridOcr
+                    ? "Upload · OCR · ingest"
+                    : "Upload & ingest"}
               </Button>
             </div>
           </div>
