@@ -53,6 +53,14 @@ export interface MedRackApi {
   removeBook(
     book_id: string,
   ): Promise<{ ok: boolean; book_id: string; moved_to?: string; error?: string }>;
+  /** Wipe all books + purge kb_* Chroma collections for a clean re-ingest. */
+  clearAllBooks(): Promise<{
+    ok: boolean;
+    removed_count?: number;
+    removed_ids?: string[];
+    purged_collections?: string[];
+    error?: string;
+  }>;
   reindexBook(book_id: string): Promise<{ ok: true; book_id: string }>;
   getIngestionStatus(book_id: string): Promise<IngestionStatus>;
   listQuestionBanks(): Promise<QuestionBankInfo[]>;
@@ -73,6 +81,10 @@ export interface MedRackApi {
     name: string;
     subject: Subject;
     version?: string;
+    /** Hybrid OCR for scanned question papers (Windows agent) */
+    hybrid_ocr?: boolean;
+    /** Auto Marker on table-like pages during hybrid OCR */
+    use_marker?: boolean;
   }): Promise<JobHandle>;
   // View the questions inside a bank.
   getBankQuestions(name: string): Promise<BankQuestionsResponse>;
@@ -208,6 +220,10 @@ export const mockApi: MedRackApi = {
   async removeBook(book_id) {
     await sleep(200);
     return { ok: true as const, book_id, moved_to: "/home/user/.medrack/trash" };
+  },
+  async clearAllBooks() {
+    await sleep(200);
+    return { ok: true, removed_count: 0, removed_ids: [], purged_collections: [] };
   },
   async reindexBook(book_id) {
     await sleep(200);
@@ -420,6 +436,7 @@ export const httpApi: MedRackApi = {
     return http(`/library/books?${q}`, { method: "POST" });
   },
   removeBook: (id) => http(`/library/books/${id}`, { method: "DELETE" }),
+  clearAllBooks: () => http("/library/books/clear-all", { method: "POST" }),
   reindexBook: (id) => http(`/library/books/${id}/reindex`, { method: "POST" }),
   getIngestionStatus: (id) => http(`/library/ingestion-status/${id}`),
   listQuestionBanks: () => http("/library/question-banks"),
@@ -485,13 +502,22 @@ export const httpApi: MedRackApi = {
     if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
     return (await res.json()) as JobHandle;
   },
-  uploadQuestionBank: async ({ file, name, subject, version = "v1" }) => {
+  uploadQuestionBank: async ({
+    file,
+    name,
+    subject,
+    version = "v1",
+    hybrid_ocr = true,
+    use_marker = true,
+  }) => {
     // multipart/form-data (File + fields), so use raw fetch not `http`.
     const fd = new FormData();
     fd.append("file", file);
     fd.append("name", name);
     fd.append("subject", subject);
     fd.append("version", version);
+    fd.append("hybrid_ocr", String(hybrid_ocr));
+    fd.append("use_marker", String(use_marker));
     const res = await fetch(`${BASE}/library/question-banks/upload`, { method: "POST", body: fd });
     if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
     return (await res.json()) as JobHandle;

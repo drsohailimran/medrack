@@ -215,54 +215,54 @@ def _ocr_agent_url() -> str:
     return candidates[0] if candidates else "http://192.168.29.89:8090"
 
 
-def run_hybrid_ingest_book(
-    job,
+def _windows_hybrid_ocr(
+    pdf: Path,
     progress: Progress,
     *,
-    pdf_path: str,
-    subject: str,
-    title: str,
-    replace: bool = False,
-    use_marker: bool = False,
+    title: str = "",
+    subject: str = "psm",
+    use_marker: bool = True,
+    progress_lo: float = 1.0,
+    progress_hi: float = 70.0,
 ) -> Dict[str, Any]:
-    """P1 single-UI hybrid ingest.
+    """Run Windows hybrid OCR (push preferred, pull fallback).
 
-    Prefer **push** to Windows OCR agent (started with Start MedRack):
-      stop Qwopus → RapidOCR → validate → text PDF → start Qwopus
-    then Ubuntu indexes the clean PDF.
-
-    If the agent is not reachable on :8090, fall back to **queue + pull**
-    (agent's background pull loop claims the job).
+    Returns dict with clean_bytes, mode, ocr_job_id, agent, marker, marker_ranges.
+    Restarts Qwopus on the agent when OCR finishes (agent pipeline).
     """
     import httpx
-    from medrack.config import get_medrack_home
     from medrack.dashboard.services import ocr_bridge
 
-    pdf = Path(pdf_path).expanduser()
+    pdf = Path(pdf)
     if not pdf.is_file():
         raise FileNotFoundError(f"uploaded file not found: {pdf}")
+
+    span = max(1.0, float(progress_hi) - float(progress_lo))
+
+    def pmap(local_0_100: float, msg: str = "") -> None:
+        progress(progress_lo + span * (local_0_100 / 100.0), msg)
 
     agent = _ocr_agent_url()
     mode = "push"
     ocr_job_id: Optional[str] = None
     clean_bytes: Optional[bytes] = None
+    marker = None
+    marker_ranges = None
 
-    # ---- Prefer push (agent started by Start MedRack) ----
-    progress(1, "Finding Windows OCR agent (LAN :8090, then tunnel :18090)…")
+    pmap(1, "Finding Windows OCR agent (LAN :8090, then tunnel :18090)…")
     agent_up = False
-    # Re-resolve so health probe uses the same URL we will push to
     agent = _ocr_agent_url()
     try:
         with httpx.Client(timeout=5.0) as client:
             hr = client.get(f"{agent}/v1/health")
             agent_up = hr.status_code == 200
             if agent_up:
-                progress(1.5, f"OCR agent online at {agent}")
+                pmap(2, f"OCR agent online at {agent}")
     except Exception:  # noqa: BLE001
         agent_up = False
 
     if agent_up:
-        progress(2, "Stopping Qwopus + starting hybrid OCR on Windows…")
+        pmap(3, "Stopping Qwopus + starting hybrid OCR on Windows…")
         with httpx.Client(timeout=120.0) as client:
             with open(pdf, "rb") as fh:
                 resp = client.post(
@@ -278,7 +278,7 @@ def run_hybrid_ingest_book(
         if not ocr_job_id:
             raise RuntimeError("OCR agent returned no job_id")
 
-        progress(3, "Windows: stop model → OCR → validate → restart model…")
+        pmap(4, "Windows: stop model → OCR → validate → restart model…")
         deadline = time.time() + 6 * 3600
         last_msg = ""
         while time.time() < deadline:
@@ -289,11 +289,14 @@ def run_hybrid_ingest_book(
             status = body.get("status")
             apct = float(body.get("percent") or 0.0)
             msg = body.get("message") or status or "OCR"
-            overall = 3.0 + 0.67 * apct
+            # Map agent 0-100 into 4–95 of this band
+            pmap(4.0 + 0.91 * apct, msg)
             if msg != last_msg:
-                progress(overall, msg)
                 last_msg = msg
             if status == "done":
+                r0 = body.get("result") or {}
+                marker = r0.get("marker")
+                marker_ranges = r0.get("marker_ranges")
                 break
             if status == "error":
                 raise RuntimeError(f"Hybrid OCR failed: {body.get('error') or body}")
@@ -301,18 +304,16 @@ def run_hybrid_ingest_book(
         else:
             raise TimeoutError("Hybrid OCR timed out (6h)")
 
-        progress(72, "Downloading clean text PDF…")
+        pmap(96, "Downloading clean text PDF…")
         with httpx.Client(timeout=300.0) as client:
             pr = client.get(f"{agent}/v1/jobs/{ocr_job_id}/pdf")
             pr.raise_for_status()
             clean_bytes = pr.content
     else:
-        # ---- Fallback: queue for agent pull loop ----
         mode = "pull"
-        progress(
-            2,
-            "OCR agent not on :8090 — queueing job. "
-            "Use Start MedRack so the OCR agent is running.",
+        pmap(
+            3,
+            "OCR agent offline — queueing job. Use Start MedRack so the agent is running.",
         )
         ocr_job_id = ocr_bridge.create_ocr_job(
             source_pdf=pdf,
@@ -320,11 +321,7 @@ def run_hybrid_ingest_book(
             subject=subject,
             use_marker=use_marker,
         )
-        progress(
-            3,
-            f"Waiting for Windows agent to claim job {ocr_job_id[:8]}… "
-            "(agent starts with Start MedRack)",
-        )
+        pmap(4, f"Waiting for Windows agent to claim job {ocr_job_id[:8]}…")
         deadline = time.time() + 6 * 3600
         last_msg = ""
         while time.time() < deadline:
@@ -332,9 +329,8 @@ def run_hybrid_ingest_book(
             status = meta.get("status") or "unknown"
             apct = float(meta.get("percent") or 0.0)
             msg = meta.get("message") or status
-            overall = 3.0 + 0.67 * apct
+            pmap(4.0 + 0.91 * apct, f"Windows OCR: {msg}")
             if msg != last_msg:
-                progress(overall, f"Windows OCR: {msg}")
                 last_msg = msg
             if status == "done":
                 break
@@ -343,14 +339,51 @@ def run_hybrid_ingest_book(
             time.sleep(2.0)
         else:
             raise TimeoutError(
-                "Timed out waiting for OCR agent. Click Start MedRack on Windows "
-                "so the OCR agent is running, then try again."
+                "Timed out waiting for OCR agent. Start MedRack on Windows, then try again."
             )
         clean_src = ocr_bridge.result_path(ocr_job_id)
         if not clean_src or not clean_src.is_file():
             raise FileNotFoundError("OCR finished but clean_text.pdf missing")
         clean_bytes = clean_src.read_bytes()
 
+    if not clean_bytes:
+        raise RuntimeError("Hybrid OCR returned empty PDF")
+    pmap(100, f"OCR complete — clean PDF {len(clean_bytes) // 1024} KB")
+    return {
+        "clean_bytes": clean_bytes,
+        "mode": mode,
+        "ocr_job_id": ocr_job_id,
+        "agent": agent,
+        "use_marker": use_marker,
+        "marker": marker,
+        "marker_ranges": marker_ranges,
+    }
+
+
+def run_hybrid_ingest_book(
+    job,
+    progress: Progress,
+    *,
+    pdf_path: str,
+    subject: str,
+    title: str,
+    replace: bool = False,
+    use_marker: bool = False,
+) -> Dict[str, Any]:
+    """P1 single-UI hybrid ingest: Windows OCR → index clean PDF into Chroma."""
+    from medrack.config import get_medrack_home
+
+    pdf = Path(pdf_path).expanduser()
+    ocr = _windows_hybrid_ocr(
+        pdf,
+        progress,
+        title=title or pdf.stem,
+        subject=subject,
+        use_marker=use_marker,
+        progress_lo=1.0,
+        progress_hi=72.0,
+    )
+    clean_bytes = ocr["clean_bytes"]
     home = get_medrack_home()
     books = home / "books"
     books.mkdir(parents=True, exist_ok=True)
@@ -358,7 +391,7 @@ def run_hybrid_ingest_book(
         c for c in (title or pdf.stem) if c.isalnum() or c in ("-", "_", " ")
     )[:80].strip()
     clean_path = books / f"{safe or 'book'}_hybrid_ocr.pdf"
-    clean_path.write_bytes(clean_bytes or b"")
+    clean_path.write_bytes(clean_bytes)
     progress(
         75,
         f"OCR validated — clean PDF {clean_path.stat().st_size // 1024} KB — indexing…",
@@ -376,30 +409,14 @@ def run_hybrid_ingest_book(
         replace=replace,
     )
     result["hybrid_ocr"] = True
-    result["ocr_mode"] = mode
+    result["ocr_mode"] = ocr["mode"]
     result["clean_pdf"] = str(clean_path)
-    result["ocr_job_id"] = ocr_job_id
+    result["ocr_job_id"] = ocr.get("ocr_job_id")
     result["use_marker"] = use_marker
-    # Surface auto-Marker report from the Windows agent when available.
-    try:
-        if ocr_job_id and mode == "push":
-            import httpx as _httpx
-            with _httpx.Client(timeout=15.0) as _c:
-                st = _c.get(f"{agent}/v1/jobs/{ocr_job_id}")
-                if st.status_code == 200:
-                    body = st.json() or {}
-                    r0 = body.get("result") or {}
-                    if r0.get("marker") is not None:
-                        result["marker"] = r0.get("marker")
-                    if r0.get("marker_ranges") is not None:
-                        result["marker_ranges"] = r0.get("marker_ranges")
-        elif ocr_job_id and mode == "pull":
-            meta = ocr_bridge.load_meta(ocr_job_id) or {}
-            # pull path may not embed marker; leave optional
-            if meta.get("marker") is not None:
-                result["marker"] = meta.get("marker")
-    except Exception:
-        pass
+    if ocr.get("marker") is not None:
+        result["marker"] = ocr["marker"]
+    if ocr.get("marker_ranges") is not None:
+        result["marker_ranges"] = ocr["marker_ranges"]
     progress(100, "Done — book indexed; Qwopus should be back online")
     return result
 
@@ -461,8 +478,22 @@ def _merge_questions(llm_questions: list, regex_questions: list, name: str, subj
 
 
 def run_extract_bank(
-    job, progress: Progress, *, pdf_bytes: bytes, filename: str, name: str, subject: str, version: str = "v1"
+    job,
+    progress: Progress,
+    *,
+    pdf_bytes: bytes,
+    filename: str,
+    name: str,
+    subject: str,
+    version: str = "v1",
+    hybrid_ocr: bool = False,
+    use_marker: bool = True,
 ) -> Dict[str, Any]:
+    """Extract questions from a bank PDF.
+
+    If ``hybrid_ocr`` is True (scanned papers), run Windows RapidOCR (+ auto
+    Marker) first so extraction sees a real text layer, then LLM/regex extract.
+    """
     from medrack import config
     from medrack.ingest import clean as clean_mod
     from medrack.module.llm_extract import extract_questions_with_llm
@@ -476,24 +507,69 @@ def run_extract_bank(
     modules_dir.mkdir(parents=True, exist_ok=True)
     safe = _safe_stem(name)
     dest = modules_dir / f"{safe}.pdf"
-    progress(2, "Saving upload")
+    progress(1, "Saving upload")
     dest.write_bytes(pdf_bytes)
 
-    raw_pages = _extract_pages_with_progress(dest, progress, 4.0, 70.0)
+    ocr_meta: Dict[str, Any] = {"hybrid_ocr": bool(hybrid_ocr)}
+    extract_src = dest
+    text_lo, text_hi = 4.0, 70.0
+
+    if hybrid_ocr:
+        progress(2, "Hybrid OCR for scanned question bank…")
+        # Keep original scan as modules/{safe}_scan.pdf
+        scan_path = modules_dir / f"{safe}_scan.pdf"
+        try:
+            if not scan_path.exists() or scan_path.resolve() != dest.resolve():
+                scan_path.write_bytes(pdf_bytes)
+        except Exception:  # noqa: BLE001
+            pass
+        ocr = _windows_hybrid_ocr(
+            dest,
+            progress,
+            title=name or safe,
+            subject=subject,
+            use_marker=use_marker,
+            progress_lo=2.0,
+            progress_hi=62.0,
+        )
+        clean_path = modules_dir / f"{safe}_hybrid_ocr.pdf"
+        clean_path.write_bytes(ocr["clean_bytes"])
+        # Prefer clean text PDF for extraction
+        dest.write_bytes(ocr["clean_bytes"])
+        extract_src = clean_path
+        ocr_meta.update(
+            {
+                "ocr_mode": ocr.get("mode"),
+                "ocr_job_id": ocr.get("ocr_job_id"),
+                "use_marker": use_marker,
+                "marker": ocr.get("marker"),
+                "marker_ranges": ocr.get("marker_ranges"),
+                "clean_pdf": str(clean_path),
+                "scan_pdf": str(scan_path),
+            }
+        )
+        progress(64, f"OCR done — extracting questions from clean text PDF…")
+        text_lo, text_hi = 64.0, 78.0
+
+    raw_pages = _extract_pages_with_progress(extract_src, progress, text_lo, text_hi)
     pages = clean_mod.clean_pages(raw_pages)
     if not pages:
-        raise ValueError("The PDF had no extractable text pages.")
+        raise ValueError(
+            "The PDF had no extractable text pages. "
+            "For scans, enable Hybrid OCR on upload (and ensure the OCR agent is running)."
+        )
 
-    progress(74, "Extracting questions (patterns)")
+    progress(80 if hybrid_ocr else 74, "Extracting questions (patterns)")
     regex_questions = extract_mcqs_from_pages(pages) or []
 
-    progress(80, "Extracting questions (LLM)")
+    progress(82 if hybrid_ocr else 80, "Extracting questions (LLM)")
     llm_questions: list = []
     warning: Optional[str] = None
 
     def _llm_progress(i: int, n: int) -> None:
-        # Map batch progress across the 80-93% band.
-        pct = 80 + int(13 * i / max(n, 1))
+        # Map batch progress across the 82-93% band (hybrid) or 80-93%.
+        base = 82 if hybrid_ocr else 80
+        pct = base + int((93 - base) * i / max(n, 1))
         progress(min(pct, 93), f"Extracting questions (LLM) — batch {i}/{n}")
 
     try:
@@ -519,6 +595,7 @@ def run_extract_bank(
         "path": str(bank_path),
         "questions": merged,
         "_created": "API run_extract_bank",
+        "hybrid_ocr": bool(hybrid_ocr),
     }
     bank_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     progress(100, f"{len(merged)} questions extracted")
@@ -532,6 +609,7 @@ def run_extract_bank(
             "source_pdf": str(dest),
         },
         "warning": warning,
+        **ocr_meta,
     }
 
 

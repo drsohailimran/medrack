@@ -226,6 +226,11 @@ def make_router() -> APIRouter:
     def remove_book(book_id: str):
         return library.remove_book(book_id)
 
+    @router.post("/library/books/clear-all")
+    def clear_all_books():
+        """Delete every book PDF + purge kb_* Chroma collections (fresh re-ingest)."""
+        return library.clear_all_books(purge_index=True)
+
     @router.post("/library/books/{book_id}/reindex")
     def reindex(book_id: str):
         return library.reindex(book_id)
@@ -293,12 +298,17 @@ def make_router() -> APIRouter:
         name: str = Form(...),
         subject: str = Form(...),
         version: str = Form("v1"),
+        hybrid_ocr: bool = Form(False),
+        use_marker: bool = Form(True),
     ):
         """Upload a question-bank PDF. Extraction runs on a background
         thread (it can OCR/parse many pages); returns a ``job_id``. Poll
         ``GET /jobs/{job_id}`` for progress; on completion the result holds
         the saved bank. The bank then appears in
         ``GET /library/question-banks``.
+
+        hybrid_ocr=True (recommended for scans): Windows RapidOCR + auto Marker
+        first, then extract questions from the clean text PDF.
         """
         from medrack.dashboard.services.tasks import run_extract_bank
 
@@ -307,10 +317,23 @@ def make_router() -> APIRouter:
         job = registry.run(
             "extract_bank",
             lambda job, progress: run_extract_bank(
-                job, progress, pdf_bytes=data, filename=filename, name=name, subject=subject, version=version
+                job,
+                progress,
+                pdf_bytes=data,
+                filename=filename,
+                name=name,
+                subject=subject,
+                version=version,
+                hybrid_ocr=hybrid_ocr,
+                use_marker=use_marker,
             ),
         )
-        return {"job_id": job.id, "kind": "extract_bank"}
+        return {
+            "job_id": job.id,
+            "kind": "extract_bank",
+            "hybrid_ocr": hybrid_ocr,
+            "use_marker": use_marker,
+        }
 
     # ---- Questions ----
 

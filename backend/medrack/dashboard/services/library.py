@@ -503,57 +503,156 @@ class LibraryService:
     def remove_book(self, book_id: str) -> Dict[str, Any]:
         """Fully remove a book from the library.
 
-        Deletes the book's vectors from the subject's ChromaDB
-        collection, archives it in the manifest (so it disappears from
-        ``list_books``), and moves the source PDF to ``trash/``. This is
-        what makes "delete" actually take effect (the old version only
-        looked for ``<book_id>.pdf`` — which never matched the real
-        filename — and touched neither the manifest nor the index).
+        Handles:
+        - Manifest entries (active or archived) — drop Chroma chunks + archive
+        - Filesystem-only PDFs listed as not-indexed (inbox/books stem = book_id)
+
+        Moves matching PDFs to ``trash/``. Returns ok=False only if nothing matched.
         """
+        import shutil
         from medrack.ingest import manifest as manifest_mod
         from medrack.ingest.index import delete_book_chunks
 
+        trash = self._home / "trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        moved_to: list[str] = []
+        found = False
+
         m = manifest_mod.load_manifest()
-        record = None
-        for b in m.get("books", []):
-            if b.get("book_id") == book_id and not b.get("archived_at"):
-                record = b
-                break
-        if record is None:
+        for b in list(m.get("books", [])):
+            if b.get("book_id") != book_id:
+                continue
+            found = True
+            subject = b.get("subject") or "psm"
+            filename = b.get("filename") or ""
+            sha256 = b.get("sha256")
+            try:
+                delete_book_chunks(subject, book_id)
+            except Exception:  # noqa: BLE001
+                pass
+            if sha256 and not b.get("archived_at"):
+                try:
+                    manifest_mod.archive_book(sha256)
+                except Exception:  # noqa: BLE001
+                    pass
+            if filename:
+                for sub in ("inbox", "books", "modules"):
+                    src = self._home / sub / filename
+                    if src.is_file():
+                        dest = trash / filename
+                        try:
+                            if dest.exists():
+                                dest.unlink()
+                            src.rename(dest)
+                            moved_to.append(str(dest))
+                        except Exception:  # noqa: BLE001
+                            try:
+                                shutil.move(str(src), str(dest))
+                                moved_to.append(str(dest))
+                            except Exception:  # noqa: BLE001
+                                pass
+                        break
+
+        # Filesystem-only rows (UI "not indexed")
+        for sub in ("inbox", "books"):
+            d = self._home / sub
+            if not d.is_dir():
+                continue
+            for pdf in list(d.rglob("*.pdf")):
+                if pdf.stem == book_id or pdf.name == book_id:
+                    found = True
+                    dest = trash / pdf.name
+                    try:
+                        if dest.exists():
+                            dest.unlink()
+                        pdf.rename(dest)
+                        moved_to.append(str(dest))
+                    except Exception:  # noqa: BLE001
+                        try:
+                            shutil.move(str(pdf), str(dest))
+                            moved_to.append(str(dest))
+                        except Exception:  # noqa: BLE001
+                            pass
+
+        if not found:
             return {"ok": False, "error": f"book not found: {book_id}", "book_id": book_id}
+        return {
+            "ok": True,
+            "book_id": book_id,
+            "moved_to": moved_to[0] if moved_to else str(trash),
+            "moved_paths": moved_to,
+        }
 
-        sha256 = record.get("sha256")
-        subject = record.get("subject") or "psm"
-        filename = record.get("filename") or ""
+    def clear_all_books(self, *, purge_index: bool = True) -> Dict[str, Any]:
+        """Remove every library book and optionally purge all kb_* Chroma collections."""
+        import shutil
 
-        # 1. Drop the book's chunks from ChromaDB (so retrieval no longer
-        #    surfaces them). Best-effort — a missing collection is fine.
+        removed_ids: list[str] = []
+        moved: list[str] = []
+        trash = self._home / "trash"
+        trash.mkdir(parents=True, exist_ok=True)
+
         try:
-            delete_book_chunks(subject, book_id)
+            from medrack.ingest import manifest as manifest_mod
+
+            m = manifest_mod.load_manifest()
+            for b in list(m.get("books", [])):
+                bid = b.get("book_id")
+                if not bid:
+                    continue
+                result = self.remove_book(bid)
+                if result.get("ok"):
+                    removed_ids.append(bid)
+                    if result.get("moved_to"):
+                        moved.append(str(result["moved_to"]))
         except Exception:  # noqa: BLE001
             pass
 
-        # 2. Archive in the manifest so it leaves the library listing.
-        if sha256:
-            manifest_mod.archive_book(sha256)
-
-        # 3. Move the source PDF out of the way (best-effort).
-        trash = self._home / "trash"
-        trash.mkdir(parents=True, exist_ok=True)
-        moved_to = str(trash)
-        if filename:
-            for sub in ("inbox", "books", "modules"):
-                src = self._home / sub / filename
-                if src.exists():
-                    dest = trash / filename
+        for sub in ("inbox", "books"):
+            d = self._home / sub
+            if not d.is_dir():
+                continue
+            for pdf in list(d.rglob("*.pdf")):
+                dest = trash / pdf.name
+                try:
+                    if dest.exists():
+                        dest.unlink()
+                    pdf.rename(dest)
+                    moved.append(str(dest))
+                    removed_ids.append(pdf.stem)
+                except Exception:  # noqa: BLE001
                     try:
-                        src.rename(dest)
-                        moved_to = str(dest)
+                        shutil.move(str(pdf), str(dest))
+                        moved.append(str(dest))
+                        removed_ids.append(pdf.stem)
                     except Exception:  # noqa: BLE001
                         pass
-                    break
 
-        return {"ok": True, "book_id": book_id, "moved_to": moved_to}
+        purged: list[str] = []
+        if purge_index:
+            try:
+                import chromadb
+                from medrack.ingest.index import _chroma_path
+
+                client = chromadb.PersistentClient(path=str(_chroma_path()))
+                for col in list(client.list_collections()):
+                    name = getattr(col, "name", None) or str(col)
+                    if str(name).startswith("kb_"):
+                        try:
+                            client.delete_collection(str(name))
+                            purged.append(str(name))
+                        except Exception:  # noqa: BLE001
+                            pass
+            except Exception:  # noqa: BLE001
+                pass
+
+        return {
+            "ok": True,
+            "removed_count": len(set(removed_ids)),
+            "removed_ids": sorted(set(removed_ids)),
+            "moved": moved,
+            "purged_collections": purged,
+        }
 
     def get_question_bank(self, name: str) -> Optional[Dict[str, Any]]:
         """Return a single question bank's full JSON (including its

@@ -40,6 +40,8 @@ function QuestionBanksPage() {
   const [bankName, setBankName] = useState("regression-v1");
   const [bankSubject, setBankSubject] = useState("psm");
   const [bankVersion, setBankVersion] = useState("v1");
+  const [hybridOcr, setHybridOcr] = useState(true);
+  const [useMarker, setUseMarker] = useState(true);
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const [result, setResult] = useState<{
     ok: boolean;
@@ -72,7 +74,14 @@ function QuestionBanksPage() {
 
   const upload = useMutation({
     mutationFn: async (file: File) =>
-      api.uploadQuestionBank({ file, name: bankName, subject: bankSubject, version: bankVersion }),
+      api.uploadQuestionBank({
+        file,
+        name: bankName,
+        subject: bankSubject as any,
+        version: bankVersion,
+        hybrid_ocr: hybridOcr,
+        use_marker: useMarker,
+      }),
     onSuccess: (handle) => {
       setResult(null);
       extract.start(handle.job_id);
@@ -286,8 +295,8 @@ function QuestionBanksPage() {
           <div className="surface-card max-h-[90vh] w-full max-w-lg overflow-y-auto p-6">
             <h2 className="text-lg font-semibold">Upload question bank</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Select a PDF containing a list of questions (MCQ or theory). The backend runs the
-              module-extraction pipeline and saves the result as a bank.
+              Select a PDF of exam questions (MCQ or theory). Scanned papers should use{" "}
+              <strong>Hybrid OCR</strong> so text is cleaned before extraction.
             </p>
 
             <div className="mt-4 space-y-3">
@@ -336,6 +345,32 @@ function QuestionBanksPage() {
                   </p>
                 )}
               </Field>
+              <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={hybridOcr}
+                  onChange={(e) => setHybridOcr(e.target.checked)}
+                  disabled={busy}
+                />
+                <span>
+                  <span className="font-medium text-foreground">
+                    Hybrid OCR (recommended for scans)
+                  </span>
+                  {" — "}
+                  stop Qwopus → RapidOCR → auto Marker on table pages → clean text PDF → restart
+                  Qwopus → extract questions. Requires the OCR agent (Start MedRack).
+                </span>
+              </label>
+              <label className="flex items-center gap-2 pl-6 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={useMarker}
+                  onChange={(e) => setUseMarker(e.target.checked)}
+                  disabled={busy || !hybridOcr}
+                />
+                Auto Marker on table-like pages (slower, better tables)
+              </label>
             </div>
 
             {extracting && extract.job && (
@@ -371,11 +406,13 @@ function QuestionBanksPage() {
               >
                 {busy ? (
                   <>
-                    <Upload className="mr-1.5 h-4 w-4 animate-pulse" /> Extracting…
+                    <Upload className="mr-1.5 h-4 w-4 animate-pulse" />{" "}
+                    {hybridOcr ? "OCR + extracting…" : "Extracting…"}
                   </>
                 ) : (
                   <>
-                    <Upload className="mr-1.5 h-4 w-4" /> Upload &amp; extract
+                    <Upload className="mr-1.5 h-4 w-4" />{" "}
+                    {hybridOcr ? "Upload · OCR · extract" : "Upload & extract"}
                   </>
                 )}
               </Button>

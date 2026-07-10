@@ -102,6 +102,19 @@ function BooksPage() {
     onError: (err: Error) => setActionMessage(`Delete failed: ${err.message}`),
   });
 
+  const clearAllMutation = useMutation({
+    mutationFn: () => api.clearAllBooks(),
+    onSuccess: (data) => {
+      setActionMessage(
+        data.ok
+          ? `Cleared library — removed ${data.removed_count ?? 0} book(s); knowledge base purged. Ready for fresh hybrid ingest.`
+          : `Clear failed: ${data.error ?? "unknown"}`,
+      );
+      qc.invalidateQueries({ queryKey: ["books"] });
+    },
+    onError: (err: Error) => setActionMessage(`Clear failed: ${err.message}`),
+  });
+
   const subjectOptions = Array.from(
     new Set([
       ...KNOWN_SUBJECTS.map((s) => s.value),
@@ -116,9 +129,27 @@ function BooksPage() {
         title="Books"
         description="Textbook PDFs indexed into the retrieval store. Every claim in a generated answer is grounded in chunks from these sources."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={!books?.length || clearAllMutation.isPending}
+              onClick={() => {
+                if (
+                  confirm(
+                    `Delete ALL ${books?.length ?? 0} books and purge the knowledge base? You can hybrid-ingest fresh textbooks afterwards.`,
+                  )
+                ) {
+                  clearAllMutation.mutate();
+                }
+              }}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              {clearAllMutation.isPending ? "Clearing…" : "Delete all books"}
             </Button>
             <Button onClick={() => setShowImportDialog(true)}>
               <Plus className="mr-1.5 h-4 w-4" /> Import book
@@ -309,7 +340,7 @@ function BooksPage() {
                     {b.indexed ? (
                       <StatusBadge tone="pass">indexed</StatusBadge>
                     ) : (
-                      <StatusBadge tone="warn">indexing</StatusBadge>
+                      <StatusBadge tone="warn">not indexed</StatusBadge>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">
