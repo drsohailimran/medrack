@@ -341,6 +341,100 @@ def select_marker_ranges(
     return [], report
 
 
+def _distribute_marker_text(
+    content: str,
+    start: int,
+    end: int,
+    rapid_pages: Sequence[str],
+) -> List[Tuple[int, str]]:
+    """Map Marker markdown onto page indices without crude equal char-split.
+
+    Priority:
+    1. Explicit page breaks (form-feed / markers) when count matches
+    2. Proportional weights from RapidOCR page lengths + paragraph-aware cuts
+    3. Equal-ish fallback with newline-aware cuts (never mid-word when possible)
+    """
+    content = (content or "").strip()
+    num_pages = end - start + 1
+    if not content or num_pages <= 0:
+        return []
+    if num_pages == 1:
+        return [(start, content)]
+
+    # Explicit page separators (some converters emit these)
+    for sep in ("\f", "\n\x0c", "\n---PAGE---\n", "\n<!-- page -->\n", "\n\n---\n\n"):
+        if sep in content:
+            parts = [p.strip() for p in content.split(sep)]
+            # Drop empty leading/trailing from split artifacts
+            while parts and not parts[0]:
+                parts.pop(0)
+            while parts and not parts[-1]:
+                parts.pop()
+            if len(parts) == num_pages:
+                return [
+                    (start + i, parts[i])
+                    for i in range(num_pages)
+                    if parts[i]
+                ]
+
+    # Weights from RapidOCR page text lengths (preserve relative bulk)
+    weights: List[int] = []
+    for i in range(num_pages):
+        pidx = start + i
+        raw = rapid_pages[pidx] if 0 <= pidx < len(rapid_pages) else ""
+        weights.append(max(len(raw or ""), 80))
+
+    total_w = sum(weights) or num_pages
+    n = len(content)
+    targets = [max(40, int(round(n * w / total_w))) for w in weights]
+    # Fix rounding so targets sum to n
+    drift = n - sum(targets)
+    if targets:
+        targets[-1] = max(1, targets[-1] + drift)
+
+    pieces: List[str] = []
+    pos = 0
+    for i in range(num_pages):
+        if i == num_pages - 1:
+            pieces.append(content[pos:].strip())
+            break
+        target_end = min(n, pos + targets[i])
+        # Prefer paragraph, then line, then space break near target
+        break_at = target_end
+        search_lo = max(pos + 20, target_end - 120)
+        search_hi = min(n, target_end + 160)
+        window = content[search_lo:search_hi]
+        for pat in ("\n\n", "\n", " "):
+            # find break closest to target_end within window
+            rel = target_end - search_lo
+            best = None
+            best_dist = 10**9
+            idx = 0
+            while True:
+                j = window.find(pat, idx)
+                if j < 0:
+                    break
+                abs_pos = search_lo + j + len(pat)
+                dist = abs(abs_pos - target_end)
+                if dist < best_dist and abs_pos > pos:
+                    best_dist = dist
+                    best = abs_pos
+                idx = j + 1
+            if best is not None:
+                break_at = best
+                break
+        if break_at <= pos:
+            break_at = min(n, pos + max(1, targets[i]))
+        pieces.append(content[pos:break_at].strip())
+        pos = break_at
+
+    out: List[Tuple[int, str]] = []
+    for i, piece in enumerate(pieces):
+        if piece:
+            out.append((start + i, piece))
+    return out
+
+
 def apply_marker_ranges(
     pdf_path: Path,
     pages: List[str],
@@ -354,6 +448,8 @@ def apply_marker_ranges(
     """Optionally replace page ranges with Marker markdown (when marker works).
 
     If Marker fails or is unavailable, leaves RapidOCR text in place.
+    Multi-page Marker output is distributed with paragraph-aware proportional
+    split (not equal char-split), weighted by RapidOCR page lengths.
     """
     if not ranges:
         return pages
@@ -386,24 +482,12 @@ def apply_marker_ranges(
                     )
                 continue
 
-        # Split Marker MD across pages in the range (same strategy as Plan C merge)
         num_pages = end - start + 1
         if num_pages <= 0:
             continue
-        if num_pages == 1:
-            if content.strip():
-                out[start] = content.strip()
-        else:
-            chunk = max(1, len(content) // num_pages)
-            for i in range(num_pages):
-                pidx = start + i
-                if pidx < 0 or pidx >= len(out):
-                    continue
-                a = i * chunk
-                b = a + chunk if i < num_pages - 1 else len(content)
-                piece = content[a:b].strip()
-                if piece:
-                    out[pidx] = piece
+        for pidx, piece in _distribute_marker_text(content, start, end, out):
+            if 0 <= pidx < len(out) and piece:
+                out[pidx] = piece
 
         if progress:
             progress(
@@ -455,19 +539,100 @@ def _run_marker_range(pdf_path: Path, start: int, end: int) -> str:
     return text or ""
 
 
+def _page_gibberish_score(text: str) -> float:
+    """0..1 gibberish heuristic (1 = unusable OCR noise)."""
+    if not text or not text.strip():
+        return 1.0
+    raw = text.strip()
+    n = len(raw)
+    if n < 20:
+        return 0.85
+    alpha = sum(ch.isalpha() for ch in raw)
+    digit = sum(ch.isdigit() for ch in raw)
+    alpha_ratio = alpha / n
+    vowels = sum(ch.lower() in "aeiou" for ch in raw if ch.isalpha())
+    vowel_ratio = vowels / max(1, alpha)
+    weird = sum(
+        1
+        for ch in raw
+        if not (ch.isalnum() or ch.isspace() or ch in ".,;:()[]-%/'\"")
+    )
+    weird_ratio = weird / n
+    words = [w for w in raw.split() if w]
+    avg_w = (sum(len(w) for w in words) / len(words)) if words else 0.0
+    # Fraction of tokens that look like real words (letters only, length 3+)
+    realish = sum(1 for w in words if len(w) >= 3 and w.isalpha()) / max(1, len(words))
+
+    score = 0.0
+    if alpha_ratio < 0.30:
+        score += 0.55
+    elif alpha_ratio < 0.45:
+        score += 0.40
+    elif alpha_ratio < 0.55:
+        score += 0.18
+    if alpha > 20 and vowel_ratio < 0.22:
+        score += 0.25
+    if weird_ratio > 0.25:
+        score += 0.35
+    elif weird_ratio > 0.12:
+        score += 0.22
+    if avg_w > 0 and (avg_w < 2.2 or avg_w > 18):
+        score += 0.15
+    if realish < 0.25 and n > 40:
+        score += 0.25
+    if digit / n > 0.45 and alpha_ratio < 0.3:
+        score += 0.1
+    return max(0.0, min(1.0, score))
+
+
 def validate_ocr_pages(
     pages: Sequence[str],
     *,
     min_nonempty_ratio: float = 0.85,
     min_avg_chars: float = 40.0,
+    max_mean_gibberish: float = 0.78,
 ) -> Dict:
-    """Quality gate before we restart Qwopus / hand PDF to MedRack."""
+    """Quality gate before we restart Qwopus / hand PDF to MedRack.
+
+    Checks nonempty ratio, avg chars, and a gibberish score on sample pages
+    so garbage OCR does not silently become a textbook KB.
+    """
     n = max(1, len(pages))
     nonempty = sum(1 for p in pages if len((p or "").strip()) >= 20)
     total_chars = sum(len(p or "") for p in pages)
     avg_chars = total_chars / n
     ratio = nonempty / n
-    ok = ratio >= min_nonempty_ratio and avg_chars >= min_avg_chars
+
+    # Sample evenly across the book for gibberish
+    sample_idx = list(range(0, len(pages), max(1, len(pages) // 12)))[:12]
+    if not sample_idx and pages:
+        sample_idx = [0]
+    gib_scores = [
+        _page_gibberish_score(pages[i] or "")
+        for i in sample_idx
+        if 0 <= i < len(pages)
+    ]
+    mean_gib = (sum(gib_scores) / len(gib_scores)) if gib_scores else 1.0
+    max_gib = max(gib_scores) if gib_scores else 1.0
+
+    structure_ok = ratio >= min_nonempty_ratio and avg_chars >= min_avg_chars
+    gib_ok = mean_gib < max_mean_gibberish
+    ok = structure_ok and gib_ok
+
+    if ok:
+        message = "OCR quality OK"
+    elif not structure_ok:
+        message = (
+            f"OCR quality failed: nonempty={ratio:.0%} "
+            f"(need >={min_nonempty_ratio:.0%}), "
+            f"avg_chars={avg_chars:.0f} (need >={min_avg_chars:.0f})"
+        )
+    else:
+        message = (
+            f"OCR quality failed: mean_gibberish={mean_gib:.3f} "
+            f"(need < {max_mean_gibberish})"
+        )
+
     return {
         "ok": ok,
         "page_count": len(pages),
@@ -476,15 +641,11 @@ def validate_ocr_pages(
         "avg_chars_per_page": round(avg_chars, 1),
         "min_nonempty_ratio": min_nonempty_ratio,
         "min_avg_chars": min_avg_chars,
-        "message": (
-            "OCR quality OK"
-            if ok
-            else (
-                f"OCR quality failed: nonempty={ratio:.0%} "
-                f"(need ≥{min_nonempty_ratio:.0%}), "
-                f"avg_chars={avg_chars:.0f} (need ≥{min_avg_chars:.0f})"
-            )
-        ),
+        "mean_gibberish": round(mean_gib, 3),
+        "max_gibberish": round(max_gib, 3),
+        "max_mean_gibberish": max_mean_gibberish,
+        "gibberish_samples": len(gib_scores),
+        "message": message,
     }
 
 
