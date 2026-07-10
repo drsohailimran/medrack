@@ -85,3 +85,24 @@ watchdog exits instead of relaunching) *before* killing the model - don't kill
 - **Stop on the server doesn't work** -> the `RemoteStop` value in
   `medrack-config.ps1` must be a command that exists on the box (default
   `stop_medrack.sh`). Leaving MedRack running is harmless.
+
+## Permanent Ubuntu ↔ Windows link
+
+One-time: double-click **INSTALL-PERMANENT-LINK.cmd** (UAC) for firewall + elevated tasks,
+or rely on user logon tasks already set by the agent:
+
+| Task | Purpose |
+|------|---------|
+| MedRack OCR Agent | Always-on OCR API :8090 (restart on fail) |
+| MedRack OCR Tunnel | Reverse SSH backup Ubuntu:18090 → Windows:8090 |
+| MedRack Link Watchdog | Every 5 min — restart agent/tunnel if dead |
+| MedRack Qwopus Server | Model (started by Start MedRack) |
+
+**Stop MedRack** frees GPU (stops model) but **keeps** OCR agent + tunnel up so hybrid ingest still works next time.
+
+Ubuntu uses **direct LAN** `http://192.168.29.89:8090` first, then tunnel fallback.
+
+Verify from Ubuntu:
+  curl http://192.168.29.89:8090/v1/health
+  curl http://127.0.0.1:18090/v1/health
+  curl http://192.168.29.89:8080/health
