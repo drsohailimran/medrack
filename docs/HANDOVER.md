@@ -1,4 +1,4 @@
-﻿# MedRack â€” Complete Handover Document (v1.3.0)
+﻿# MedRack â€” Complete Handover Document (v1.3.1)
 
 **Audience:** Any engineer or AI with **no prior context**.  
 **Goal:** After reading this file alone, you can operate, troubleshoot, and extend MedRack.  
@@ -13,6 +13,19 @@ MedRack is a **local-first RAG system** that turns MBBS exam question banks into
 **Product priority:** answer quality > overnight stability > speed.
 
 ---
+
+## Reliability suite (v1.3.1)
+
+- Jobs persist to $MEDRACK_HOME/jobs.sqlite (restart marks interrupted jobs as error).
+- GPU exclusive lock: hybrid OCR / bank extract / solve cannot run concurrently.
+- GET /api/v1/system/preflight — disk, OCR agent, LLM, GPU lock, 
+eady_for_p2.
+- GET /api/v1/jobs — recent job history.
+- Book + bank post-job verification (including gibberish text quality).
+- Subject validated at upload (400 INVALID_SUBJECT).
+- P2 runner: powercfg sleep prevent + preflight + skip-on-fail.
+
+
 
 ## 1. Machines and network
 
@@ -74,7 +87,7 @@ API probes URLs in order and uses the first healthy agent.
 
 - Repo: https://github.com/drsohailimran/medrack  
 - Branch: `main`  
-- Tags: `v1.0.0` (early), `v1.1.0` (P0â€“P4 freeze), **`v1.3.0`** (auto Marker + handover + Windows consolidation)  
+- Tags: `v1.0.0` (early), `v1.1.0` (P0â€“P4 freeze), **`v1.3.1`** (auto Marker + handover + Windows consolidation)  
 - License: **proprietary**
 
 ---
@@ -214,7 +227,7 @@ API client: `src/lib/api/client.ts` Â· jobs: `src/lib/use-job.ts`.
 
 Versions live in `PIPELINE_VERSIONS` / answer `versions` dict:
 
-| Key | Meaning (v1.3.0 live) |
+| Key | Meaning (v1.3.1 live) |
 |-----|------------------------|
 | schema | 3 |
 | prompt | **6** |
@@ -279,6 +292,27 @@ API: `POST /library/question-banks/upload` with `hybrid_ocr=true` & `use_marker=
 - API: `POST /api/v1/library/books/clear-all` (purges `kb_*` Chroma collections)
 - Fixed: filesystem-only ("not indexed") PDFs can now be deleted
 
+### Post-ingest verification (automatic + API)
+
+Every successful book ingest (`run_ingest_book` / hybrid) runs a **verification gate** before the job is marked done:
+
+| Check | Hard fail if |
+|--------|----------------|
+| Active manifest entry | Missing |
+| Pages / chunks in manifest | pages ≤ 0 or chunks &lt; 1 |
+| Chroma vectors for `book_id` | count &lt; 1 |
+| Sample retrieval on subject KB | Probe errors (soft) / empty collection (hard when no hits at all) |
+| Source PDF on disk | Missing → warning |
+| Chunk density / OCR suspects | Warning only if low/high |
+
+- Job **errors** if hard checks fail (overnight P2 will not treat it as success).
+- Result JSON includes `verification: { ok, checks, errors, warnings, chunks_chroma, ... }`.
+- Manual recheck: `GET /api/v1/library/books/{book_id}/verify`
+
+### P2 overnight
+
+Owner drops PDFs + `ORDER.md` in `C:\Medrack\p2-inbox\`. AI ingests in order with hybrid OCR; **each book must pass verification** before the next starts (or failures are logged and skipped per policy).
+
 ## 8. Day-to-day operator workflows
 
 ### A. Solve a question module â†’ PDF
@@ -326,7 +360,7 @@ cd C:\Medrack\ocr
 .\venv\Scripts\python.exe -m pipeline.test_auto_marker
 ```
 
-**E2E (2026-07-10) verified:** hybrid ingest with auto Marker selected page 2 of smoke PDF; job `done`; `marker.mode=auto`; single-question generate OK (~22s); API **1.3.0**.
+**E2E (2026-07-10) verified:** hybrid ingest with auto Marker selected page 2 of smoke PDF; job `done`; `marker.mode=auto`; single-question generate OK (~22s); API **1.2.0**.
 
 ---
 
@@ -392,7 +426,7 @@ Copy from `C:\Medrack\ocr\` excluding venv/jobs.
 | P2 | **Deferred** | Mass multi-subject book content (owner runs later) |
 | P3 | **Approved** | Stop mid-batch + keep/delete; live LLM indicator |
 | P4 | **Approved** | GitHub sync, housekeeping |
-| Post-1.1 | **v1.3.0** | Auto Marker page detect; Windows single-folder; this handover |
+| Post-1.1 | **v1.3.1** | Auto Marker page detect; Windows single-folder; this handover |
 
 ---
 
@@ -434,7 +468,7 @@ Copy from `C:\Medrack\ocr\` excluding venv/jobs.
 
 ## 16. Definition of â€œhealthy systemâ€
 
-- `GET /version` â†’ `package_version` **1.3.0** (or newer)  
+- `GET /version` â†’ `package_version` **1.2.0** (or newer)  
 - `GET /llm/status` â†’ `online: true` for qwopus  
 - UI `:3010` returns 200  
 - OCR agent `:8090` health OK on Windows  

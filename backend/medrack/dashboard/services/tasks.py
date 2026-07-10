@@ -84,6 +84,7 @@ def run_ingest_book(
     job, progress: Progress, *, pdf_path: str, subject: str, title: str, replace: bool = False
 ) -> Dict[str, Any]:
     from medrack import config
+    from medrack.dashboard.services.preflight import assert_disk_space, validate_subject
     from medrack.ingest import chapter as chapter_mod
     from medrack.ingest import chunk as chunk_mod
     from medrack.ingest import clean as clean_mod
@@ -97,6 +98,9 @@ def run_ingest_book(
     pdf = Path(pdf_path).expanduser()
     if not pdf.is_file():
         raise FileNotFoundError(f"uploaded file not found: {pdf}")
+    progress(1, "Preflight: disk space + subject…")
+    assert_disk_space(config.get_medrack_home(), min_free_gb=5.0, label="MEDRACK_HOME")
+    subject = validate_subject(subject)
     subj = config.Subject.from_str(subject)
     book_id = str(uuid.uuid4())
 
@@ -158,7 +162,24 @@ def run_ingest_book(
         "ocr_suspect_pages": quality_report.suspect_pages,
     }
     manifest.add_book(book_record)
-    progress(100, "Ingested")
+    progress(98, "Verifying ingest (manifest + Chroma + retrieval)…")
+    from medrack.dashboard.services.library import LibraryService
+
+    verification = LibraryService().verify_book(
+        book_id,
+        expected_subject=subj.value,
+        expected_pages=len(cleaned),
+        expected_chunks=total_chunks,
+        min_chunks=1,
+        require_retrieval=True,
+    )
+    if not verification.get("ok"):
+        # Fail the job so overnight P2 does not treat a broken index as success
+        raise RuntimeError(
+            verification.get("message")
+            or f"Ingest verification failed for {book_id}: {verification.get('errors')}"
+        )
+    progress(100, "Ingested + verified")
     return {
         "book_id": book_id,
         "subject": subj.value,
@@ -167,6 +188,7 @@ def run_ingest_book(
         "chunks": total_chunks,
         "ocr_pages": ocr_pages_count,
         "suspect_pages": len(quality_report.suspect_pages),
+        "verification": verification,
     }
 
 
@@ -495,12 +517,19 @@ def run_extract_bank(
     Marker) first so extraction sees a real text layer, then LLM/regex extract.
     """
     from medrack import config
+    from medrack.dashboard.services.preflight import assert_disk_space, validate_subject
     from medrack.ingest import clean as clean_mod
     from medrack.module.llm_extract import extract_questions_with_llm
     from medrack.module.mcq import extract_mcqs_from_pages
     from medrack.state import get_llm_client
 
     home = config.get_medrack_home()
+    progress(0.5, "Preflight: disk space…")
+    assert_disk_space(home, min_free_gb=3.0, label="MEDRACK_HOME")
+    try:
+        subject = validate_subject(subject)
+    except ValueError:
+        subject = (subject or "psm").strip().lower()
     # Save question-bank PDFs under modules/ (not inbox/), so they are not
     # mistaken for un-indexed *books* by LibraryService.list_books.
     modules_dir = home / "modules"
@@ -598,7 +627,18 @@ def run_extract_bank(
         "hybrid_ocr": bool(hybrid_ocr),
     }
     bank_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    progress(100, f"{len(merged)} questions extracted")
+    progress(96, "Verifying question bank…")
+    from medrack.dashboard.services.library import LibraryService
+
+    verification = LibraryService().verify_question_bank(
+        name, min_questions=1, min_avg_stem_chars=15
+    )
+    if not verification.get("ok"):
+        raise RuntimeError(
+            verification.get("message")
+            or f"Bank verification failed: {verification.get('errors')}"
+        )
+    progress(100, f"{len(merged)} questions extracted + verified")
     return {
         "bank": {
             "name": name,
@@ -609,6 +649,7 @@ def run_extract_bank(
             "source_pdf": str(dest),
         },
         "warning": warning,
+        "verification": verification,
         **ocr_meta,
     }
 

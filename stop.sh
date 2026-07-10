@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# MedRack — stop the API, frontend, and bot started by run.sh.
-set -u
+# MedRack — stop services started by run.sh.
+set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
-
-for name in api frontend bot; do
-  pidfile=".run/$name.pid"
-  [ -f "$pidfile" ] || continue
-  pid="$(cat "$pidfile")"
-  if kill -0 "$pid" 2>/dev/null; then
-    echo "==> Stopping $name (pid $pid)"
-    kill "$pid" 2>/dev/null || true
-    sleep 1
-    kill -9 "$pid" 2>/dev/null || true
+stopped=0
+for svc in api frontend bot dashboard; do
+  if [ -f ".run/$svc.pid" ]; then
+    PID="$(cat ".run/$svc.pid")"
+    if kill "$PID" 2>/dev/null; then echo "==> stopped $svc (pid $PID)"; stopped=1; fi
+    rm -f ".run/$svc.pid"
   fi
-  rm -f "$pidfile"
 done
-echo "MedRack stopped."
+[ "$stopped" = 0 ] && echo "==> nothing was running"
+exit 0

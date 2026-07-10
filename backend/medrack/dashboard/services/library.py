@@ -654,6 +654,316 @@ class LibraryService:
             "purged_collections": purged,
         }
 
+    def verify_book(
+        self,
+        book_id: str,
+        *,
+        expected_subject: Optional[str] = None,
+        expected_pages: Optional[int] = None,
+        expected_chunks: Optional[int] = None,
+        min_chunks: int = 1,
+        require_retrieval: bool = True,
+    ) -> Dict[str, Any]:
+        """Post-ingest verification gate for a textbook.
+
+        Hard failures (``ok=False``) mean the book must not be trusted for
+        answering / overnight P2 should treat the job as failed:
+
+        - not in active manifest
+        - zero chunks in Chroma for this book_id
+        - missing source PDF on disk (when filename known)
+        - sample retrieval returns nothing for the subject collection
+          (when require_retrieval and collection has this book's vectors)
+
+        Warnings are non-fatal (high OCR-suspect ratio, chunk/page density
+        low, chroma count slightly off from manifest).
+        """
+        from medrack.ingest import manifest as manifest_mod
+        from medrack.ingest import index as index_mod
+
+        checks: list[dict] = []
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        def add(name: str, ok: bool, detail: str = "", *, hard: bool = True) -> None:
+            checks.append({"name": name, "ok": ok, "detail": detail, "hard": hard})
+            if not ok:
+                (errors if hard else warnings).append(f"{name}: {detail}")
+
+        m = manifest_mod.load_manifest()
+        record = None
+        for b in m.get("books", []):
+            if b.get("book_id") == book_id and not b.get("archived_at"):
+                record = b
+                break
+        if record is None:
+            add("manifest", False, "book_id not found in active manifest")
+            return {
+                "ok": False,
+                "book_id": book_id,
+                "checks": checks,
+                "errors": errors,
+                "warnings": warnings,
+            }
+        add("manifest", True, f"title={record.get('title')!r} subject={record.get('subject')}")
+
+        subject = (record.get("subject") or expected_subject or "psm").strip()
+        if expected_subject and subject != expected_subject:
+            add(
+                "subject",
+                False,
+                f"manifest subject={subject!r} expected={expected_subject!r}",
+            )
+        else:
+            add("subject", True, subject)
+
+        pages = int(record.get("pages") or 0)
+        chunks_manifest = int(record.get("chunks") or 0)
+        if expected_pages is not None and pages != expected_pages:
+            add(
+                "pages_match",
+                False,
+                f"manifest pages={pages} expected={expected_pages}",
+                hard=False,
+            )
+        if pages <= 0:
+            add("pages", False, "manifest pages <= 0")
+        else:
+            add("pages", True, str(pages))
+
+        if chunks_manifest < min_chunks:
+            add("chunks_manifest", False, f"manifest chunks={chunks_manifest} < min={min_chunks}")
+        else:
+            add("chunks_manifest", True, str(chunks_manifest))
+
+        # Source PDF still on disk
+        filename = record.get("filename") or ""
+        pdf_found = False
+        pdf_path = ""
+        if filename:
+            for sub in ("books", "inbox", "modules"):
+                p = self._home / sub / filename
+                if p.is_file():
+                    pdf_found = True
+                    pdf_path = str(p)
+                    break
+        if filename and not pdf_found:
+            add("source_pdf", False, f"PDF missing on disk: {filename}", hard=False)
+        elif filename:
+            add("source_pdf", True, pdf_path)
+
+        # Chroma vector count
+        chroma_n = 0
+        try:
+            chroma_n = int(index_mod.count_book_chunks(subject, book_id))
+        except Exception as exc:  # noqa: BLE001
+            add("chroma_count", False, f"count failed: {exc}")
+        else:
+            if chroma_n < min_chunks:
+                add("chroma_count", False, f"chroma has {chroma_n} chunks (need >= {min_chunks})")
+            else:
+                add("chroma_count", True, str(chroma_n))
+            # Allow small mismatch; large mismatch is a warning then hard if zero match expected
+            if expected_chunks is not None and abs(chroma_n - expected_chunks) > max(5, expected_chunks // 10):
+                add(
+                    "chroma_vs_expected",
+                    False,
+                    f"chroma={chroma_n} expected_chunks={expected_chunks}",
+                    hard=False,
+                )
+            if chunks_manifest and chroma_n and abs(chroma_n - chunks_manifest) > max(5, chunks_manifest // 5):
+                add(
+                    "chroma_vs_manifest",
+                    False,
+                    f"chroma={chroma_n} manifest={chunks_manifest}",
+                    hard=False,
+                )
+
+        # Density: expect some chunks relative to pages (very low density = bad OCR/chunking)
+        if pages >= 20 and chunks_manifest > 0:
+            density = chunks_manifest / float(pages)
+            if density < 0.15:
+                add(
+                    "chunk_density",
+                    False,
+                    f"{density:.3f} chunks/page (suspiciously low for {pages} pages)",
+                    hard=False,
+                )
+            else:
+                add("chunk_density", True, f"{density:.3f} chunks/page")
+
+        # Sample retrieval: collection must return something
+        if require_retrieval and chroma_n >= min_chunks:
+            try:
+                from medrack.ingest import embed as embed_mod
+
+                model = embed_mod.get_model()
+                probe = f"medical textbook {subject} examination treatment diagnosis"
+                emb = model.encode([probe]).tolist()
+                hits = index_mod.query(subject, emb, top_k=5)
+                if not hits:
+                    add("retrieval_sample", False, "query returned 0 hits for subject collection")
+                else:
+                    # Prefer at least one hit from this book if collection has multiple books
+                    from_book = sum(
+                        1
+                        for h in hits
+                        if (h.get("metadata") or {}).get("book_id") == book_id
+                        or h.get("book_id") == book_id
+                    )
+                    detail = f"{len(hits)} hits, {from_book} from this book_id"
+                    if from_book == 0 and chroma_n >= min_chunks:
+                        # Other books may rank higher — warning only if any hits exist
+                        add("retrieval_sample", True, detail + " (other books ranked higher)", hard=False)
+                    else:
+                        add("retrieval_sample", True, detail)
+            except Exception as exc:  # noqa: BLE001
+                add("retrieval_sample", False, f"retrieval probe failed: {exc}", hard=False)
+
+        # OCR quality from manifest if present
+        suspects = record.get("ocr_suspect_pages") or []
+        if isinstance(suspects, list) and pages > 0:
+            ratio = len(suspects) / float(pages)
+            if ratio > 0.35:
+                add(
+                    "ocr_suspect_ratio",
+                    False,
+                    f"{ratio:.0%} suspect pages ({len(suspects)}/{pages})",
+                    hard=False,
+                )
+            else:
+                add("ocr_suspect_ratio", True, f"{len(suspects)}/{pages}")
+
+        # Text quality / gibberish (sample chunk documents from Chroma)
+        try:
+            from medrack.dashboard.services.preflight import sample_text_quality
+            from medrack.ingest.index import get_or_create_collection
+
+            col = get_or_create_collection(subject)
+            sample = col.get(where={"book_id": book_id}, include=["documents"])
+            docs = sample.get("documents") or []
+            # Chroma may nest documents; cap samples for speed
+            flat: list[str] = []
+            for d in docs[:80]:
+                if isinstance(d, list):
+                    flat.extend(str(x) for x in d if x)
+                elif d:
+                    flat.append(str(d))
+            tq = sample_text_quality(flat, max_samples=12, fail_above=0.72)
+            # Hard-fail only if severely gibberish AND we have samples
+            hard_gib = (not tq.get("ok")) and float(tq.get("mean_gibberish") or 0) >= 0.85
+            add(
+                "text_quality",
+                bool(tq.get("ok")) or not hard_gib,
+                tq.get("detail") or "",
+                hard=hard_gib,
+            )
+            if not tq.get("ok") and not hard_gib:
+                warnings.append(f"text_quality: {tq.get('detail')}")
+        except Exception as exc:  # noqa: BLE001
+            add("text_quality", True, f"skipped ({exc})", hard=False)
+
+        ok = len(errors) == 0
+        return {
+            "ok": ok,
+            "book_id": book_id,
+            "title": record.get("title"),
+            "subject": subject,
+            "pages": pages,
+            "chunks_manifest": chunks_manifest,
+            "chunks_chroma": chroma_n,
+            "checks": checks,
+            "errors": errors,
+            "warnings": warnings,
+            "message": (
+                "Ingest verification PASSED"
+                if ok
+                else "Ingest verification FAILED: " + "; ".join(errors)
+            ),
+        }
+
+    def verify_question_bank(
+        self,
+        name: str,
+        *,
+        min_questions: int = 1,
+        min_avg_stem_chars: int = 20,
+    ) -> Dict[str, Any]:
+        """Verify a question bank is usable after extract."""
+        checks: list[dict] = []
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        def add(n: str, ok: bool, detail: str = "", *, hard: bool = True) -> None:
+            checks.append({"name": n, "ok": ok, "detail": detail, "hard": hard})
+            if not ok:
+                (errors if hard else warnings).append(f"{n}: {detail}")
+
+        bank = self.get_question_bank(name)
+        if not bank:
+            add("bank_exists", False, f"bank not found: {name}")
+            return {
+                "ok": False,
+                "name": name,
+                "checks": checks,
+                "errors": errors,
+                "warnings": warnings,
+                "message": f"Bank verification FAILED: not found {name}",
+            }
+        add("bank_exists", True, name)
+        questions = bank.get("questions") or []
+        if not isinstance(questions, list):
+            questions = []
+        nq = len(questions)
+        if nq < min_questions:
+            add("question_count", False, f"{nq} < min {min_questions}")
+        else:
+            add("question_count", True, str(nq))
+
+        stems = []
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+            t = (q.get("question_text") or q.get("stem") or "").strip()
+            if t:
+                stems.append(t)
+        empty = nq - len(stems)
+        if empty:
+            add("empty_stems", False, f"{empty} empty question stems", hard=empty > nq // 2)
+        avg = (sum(len(s) for s in stems) / len(stems)) if stems else 0
+        if stems and avg < min_avg_stem_chars:
+            add(
+                "avg_stem_len",
+                False,
+                f"{avg:.0f} chars < min {min_avg_stem_chars}",
+                hard=avg < 10,
+            )
+        else:
+            add("avg_stem_len", True, f"{avg:.0f}")
+
+        try:
+            from medrack.dashboard.services.preflight import sample_text_quality
+
+            tq = sample_text_quality(stems[:30], fail_above=0.75)
+            add("stem_text_quality", bool(tq.get("ok")), tq.get("detail") or "", hard=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+        ok = len(errors) == 0
+        return {
+            "ok": ok,
+            "name": name,
+            "question_count": nq,
+            "checks": checks,
+            "errors": errors,
+            "warnings": warnings,
+            "message": (
+                "Bank verification PASSED"
+                if ok
+                else "Bank verification FAILED: " + "; ".join(errors)
+            ),
+        }
+
     def get_question_bank(self, name: str) -> Optional[Dict[str, Any]]:
         """Return a single question bank's full JSON (including its
         ``questions`` list), or ``None`` if it does not exist.

@@ -9,18 +9,13 @@ echo "============================================"
 echo "  MedRack installer"
 echo "============================================"
 
-# --- 1. System packages -----------------------------------------------------
-#   tesseract-ocr  : OCR for scanned/image PDFs
-#   poppler-utils  : PDF rendering (pdftoppm, pdfinfo)
-#   graphviz       : renders flowchart diagrams (the `dot` tool)
+# --- 1. System packages (tesseract = OCR, poppler = PDF rendering) ----------
 if command -v apt-get >/dev/null 2>&1; then
-  echo "==> Installing system packages (needs sudo)"
+  echo "==> Installing system packages (needs sudo): python3, venv, tesseract, poppler"
   sudo apt-get update -y
-  sudo apt-get install -y python3 python3-venv python3-pip \
-       tesseract-ocr poppler-utils graphviz
+  sudo apt-get install -y python3 python3-venv python3-pip tesseract-ocr poppler-utils
 else
-  echo "WARN: apt-get not found. Ensure these are installed:"
-  echo "      python3 python3-venv tesseract-ocr poppler-utils graphviz"
+  echo "WARN: apt-get not found. Ensure these are installed: python3 python3-venv tesseract-ocr poppler-utils"
 fi
 
 # --- 2. Toolchain checks ----------------------------------------------------
@@ -33,11 +28,11 @@ echo "==> Using $($PYTHON --version), node $(node --version), npm $(npm --versio
 # --- 3. .env ----------------------------------------------------------------
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "==> Created .env from .env.example — edit it to set your LLM provider."
+  echo "==> Created .env from .env.example"
 fi
 set -a; . ./.env; set +a
-: "${MEDRACK_HOME:=$HOME/medrack-data}"
-: "${MEDRACK_API_BASE:=http://localhost:8010/api/v1}"
+: "${MEDRACK_HOME:=$HOME/.medrack}"
+: "${MEDRACK_API_BASE:=http://localhost:8000/api/v1}"
 
 # --- 4. Backend: venv + install ---------------------------------------------
 echo "==> Creating Python venv (.venv) and installing the backend"
@@ -60,8 +55,7 @@ echo "==> Building the frontend (API base baked in: $MEDRACK_API_BASE)"
 echo
 echo "============================================"
 echo "  Install complete."
-echo "  1. Edit .env — choose Gemini (paste GEMINI_API_KEY) or a local"
-echo "     llama.cpp model (set MEDRACK_LLM_BASE_URL). See docs/CONFIGURATION.md."
-echo "  2. Start:   ./run.sh"
-echo "  3. Stop:    ./stop.sh"
+echo "  1. Edit .env and set OPENCODE_ZEN_API_KEY (real LLM mode)."
+echo "  2. Start everything:   ./run.sh"
+echo "  3. Stop everything:    ./stop.sh"
 echo "============================================"

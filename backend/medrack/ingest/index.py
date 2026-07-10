@@ -150,6 +150,23 @@ def delete_book_chunks(subject: str, book_id: str) -> None:
     collection.delete(where={"book_id": book_id})
 
 
+def count_book_chunks(subject: str, book_id: str) -> int:
+    """Return how many Chroma chunks are stored for ``book_id`` in ``kb_<subject>``."""
+    collection = get_or_create_collection(subject)
+    try:
+        res = collection.get(where={"book_id": book_id}, include=[])
+        ids = res.get("ids") or []
+        return len(ids)
+    except Exception:  # noqa: BLE001
+        # Some Chroma versions want include=None or different where syntax
+        try:
+            res = collection.get(where={"book_id": book_id})
+            ids = res.get("ids") or []
+            return len(ids)
+        except Exception:  # noqa: BLE001
+            return 0
+
+
 def query(
     subject: str,
     query_embedding: List[float],
@@ -231,4 +248,10 @@ def query(
     return out
 
 
-__all__ = ["get_or_create_collection", "index_chunks", "query"]
+__all__ = [
+    "get_or_create_collection",
+    "index_chunks",
+    "delete_book_chunks",
+    "count_book_chunks",
+    "query",
+]

@@ -1,49 +1,47 @@
-# MedRack — Backend (`medrack` Python package)
+# MedRack
 
-FastAPI + RAG backend for MedRack. Ingests MBBS textbook PDFs into a ChromaDB
-vector index, extracts questions from exam-bank PDFs, retrieves relevant
-textbook context, and generates exam-style answers rendered to PDF.
+Local RAG system for MBBS theory-exam answer generation. Ingests MBBS textbooks as a permanent knowledge base, extracts questions from exam module PDFs, and produces exam-style answers as PDFs.
 
-This directory is a **pip-installable package**. It is normally installed and
-run via the repo-root scripts — see the top-level `README.md` and
-`docs/` for setup, configuration, and usage.
+## Status
 
-## Install (standalone)
+**Stage 2.1 — Init** (foundation only). Working: directory structure, manifest schema, config, CLI (init/status/version). Coming next: KB ingest, module ingest, preview, full batch, dashboard, Telegram.
+
+## Quick start
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/pip install .
+# Initialize data directories
+medrack init
+
+# Check status (deps + indexed counts)
+medrack status
 ```
 
-## CLI
+## Architecture
 
-The install exposes a `medrack` command:
+Single-pipeline RAG (one LLM call per question, not multi-agent). Three interfaces: Telegram bot (daily use), Gradio dashboard at `localhost:7860` (KB management), CLI (foundation). Preview-before-finalize flow: one answer first, user approves, then full batch.
 
-```bash
-medrack init        # create the data directories under $MEDRACK_HOME
-medrack status      # show dependencies + indexed counts
-medrack version     # print version
+## Layout
+
+```
+~/.hermes/medrack/
+├── books/<subject>/        # KB PDFs (permanent)
+├── modules/<subject>/<name>/  # Question-bank PDFs
+├── index/                  # ChromaDB vectors + manifest.json
+├── answers/                # Cached answers (re-runnable)
+├── output/                 # Final PDFs
+├── logs/                   # Operation logs
+└── medrack/                # This package
+    ├── cli.py
+    ├── config.py
+    ├── ingest/  module/  answer/  render/  bot/  dashboard/  utils/
+    └── tests/
 ```
 
-## Run the API
+## Subjects (locked)
 
-```bash
-uvicorn medrack.dashboard.api.v1:app --host 0.0.0.0 --port 8010
-# interactive API docs at  http://localhost:8010/docs
-```
+psm, fmt, medicine, surgery, ortho, obgyn, anesthesia, pediatrics, ent, ophthalmology.
 
-## Package layout
+## Documentation
 
-| Path | Purpose |
-|------|---------|
-| `config.py` | Central configuration: paths, subjects, LLM providers, chunk/retrieval/answer settings |
-| `cli.py` | Command-line entry point (`medrack init/status/version/...`) |
-| `ingest/` | Textbook ingestion: PDF → OCR/text → chunk → embed → ChromaDB |
-| `module/` | Question-bank PDF extraction (per-mark question segregation) |
-| `retrieval/` | Adaptive retrieval: question analysis → chunk ranking → metadata-boost reranker |
-| `answer/` | Prompt building, LLM client (multi-provider), answer generation, PDF rendering |
-| `dashboard/` | FastAPI `/api/v1` REST API (backend for the frontend) + Gradio dashboard |
-| `planner/`, `validation/` | Optional answer blueprinting and quality-gate stages |
-| `utils/` | Logging and shared helpers |
-
-See `docs/ARCHITECTURE.md` at the repo root for the full pipeline.
+- Plan: `~/.hermes/plans/20260626_154024/plan.md`
+- Skills: `medrack` (use), `medrack-build` (develop), `pdf-rag-qa-system` (parent)

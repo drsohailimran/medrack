@@ -231,6 +231,16 @@ def make_router() -> APIRouter:
         """Delete every book PDF + purge kb_* Chroma collections (fresh re-ingest)."""
         return library.clear_all_books(purge_index=True)
 
+    @router.get("/library/books/{book_id}/verify")
+    def verify_book(book_id: str):
+        """Post-ingest verification: manifest + Chroma count + sample retrieval."""
+        return library.verify_book(book_id)
+
+    @router.get("/library/question-banks/{name}/verify")
+    def verify_question_bank(name: str):
+        """Post-extract verification: question count + stem quality."""
+        return library.verify_question_bank(name)
+
     @router.post("/library/books/{book_id}/reindex")
     def reindex(book_id: str):
         return library.reindex(book_id)
@@ -255,10 +265,16 @@ def make_router() -> APIRouter:
         start Qwopus), then ingest the clean PDF on Ubuntu.
         """
         from medrack.config import get_medrack_home
+        from medrack.dashboard.services.preflight import validate_subject
         from medrack.dashboard.services.tasks import (
             run_hybrid_ingest_book,
             run_ingest_book,
         )
+
+        try:
+            subject = validate_subject(subject)
+        except ValueError as exc:
+            return error_response(400, "INVALID_SUBJECT", str(exc))
 
         home = get_medrack_home()
         inbox = home / "inbox"
@@ -310,7 +326,13 @@ def make_router() -> APIRouter:
         hybrid_ocr=True (recommended for scans): Windows RapidOCR + auto Marker
         first, then extract questions from the clean text PDF.
         """
+        from medrack.dashboard.services.preflight import validate_subject
         from medrack.dashboard.services.tasks import run_extract_bank
+
+        try:
+            subject = validate_subject(subject)
+        except ValueError as exc:
+            return error_response(400, "INVALID_SUBJECT", str(exc))
 
         data = file.file.read()
         filename = file.filename or f"{name}.pdf"
@@ -451,6 +473,99 @@ def make_router() -> APIRouter:
         if job is None:
             return error_response(404, "JOB_NOT_FOUND", f"job not found: {job_id}")
         return job.to_dict()
+
+    @router.get("/jobs")
+    def list_jobs(limit: int = 50):
+        """Recent jobs from SQLite (survives API restart for status history)."""
+        return {"jobs": registry.list_recent(limit=min(max(limit, 1), 200))}
+
+    @router.get("/system/preflight")
+    def system_preflight():
+        """Disk space + OCR/model + GPU-job checks before overnight runs."""
+        from medrack.config import get_medrack_home
+        from medrack.dashboard.services.preflight import assert_disk_space
+        from medrack.dashboard.services.tasks import _ocr_agent_url
+        import httpx
+
+        home = get_medrack_home()
+        out: Dict[str, Any] = {"ok": True, "checks": [], "ready_for_p2": True}
+        try:
+            disk = assert_disk_space(home, min_free_gb=5.0, label="MEDRACK_HOME")
+            out["checks"].append({"name": "disk", "ok": True, **disk})
+        except Exception as exc:  # noqa: BLE001
+            out["ok"] = False
+            out["ready_for_p2"] = False
+            out["checks"].append({"name": "disk", "ok": False, "detail": str(exc)})
+
+        # OCR agent
+        try:
+            agent = _ocr_agent_url()
+            with httpx.Client(timeout=3.0) as client:
+                r = client.get(f"{agent}/v1/health")
+            out["checks"].append(
+                {
+                    "name": "ocr_agent",
+                    "ok": r.status_code == 200,
+                    "url": agent,
+                    "detail": f"HTTP {r.status_code}",
+                }
+            )
+            if r.status_code != 200:
+                out["ok"] = False
+                out["ready_for_p2"] = False
+        except Exception as exc:  # noqa: BLE001
+            out["ok"] = False
+            out["ready_for_p2"] = False
+            out["checks"].append({"name": "ocr_agent", "ok": False, "detail": str(exc)})
+
+        # LLM endpoint from env
+        import os
+
+        llm = (os.environ.get("MEDRACK_LLM_BASE_URL") or "http://192.168.29.89:8080").rstrip("/")
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                r = client.get(f"{llm}/health")
+            out["checks"].append(
+                {
+                    "name": "llm",
+                    "ok": r.status_code == 200,
+                    "url": llm,
+                    "detail": f"HTTP {r.status_code}",
+                }
+            )
+            if r.status_code != 200:
+                out["ok"] = False
+                # LLM down is ok for pure OCR overnight, but P2 hybrid restarts model
+                out["ready_for_p2"] = False
+        except Exception as exc:  # noqa: BLE001
+            out["ok"] = False
+            out["ready_for_p2"] = False
+            out["checks"].append({"name": "llm", "ok": False, "url": llm, "detail": str(exc)})
+
+        # GPU exclusive lock / concurrent OCR+solve
+        try:
+            gpu = registry.gpu_status()
+            active = registry.active_gpu_jobs()
+            # Informational — P2 runner still proceeds; concurrent solve is blocked by lock
+            out["checks"].append(
+                {
+                    "name": "gpu_lock",
+                    "ok": True,
+                    "busy": gpu.get("busy"),
+                    "holder_job_id": gpu.get("holder_job_id"),
+                    "holder_kind": gpu.get("holder_kind"),
+                    "active_gpu_jobs": len(active),
+                    "detail": (
+                        f"busy={gpu.get('busy')} holder={gpu.get('holder_kind') or 'none'}"
+                    ),
+                }
+            )
+            out["gpu"] = gpu
+            out["active_gpu_jobs"] = active
+        except Exception as exc:  # noqa: BLE001
+            out["checks"].append({"name": "gpu_lock", "ok": True, "detail": f"skipped: {exc}"})
+
+        return out
 
     @router.post("/jobs/{job_id}/cancel")
     def cancel_job(job_id: str):

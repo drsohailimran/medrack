@@ -1,0 +1,1 @@
+function e(e){if(!e)return null;let t=new Date(e);if(!isNaN(t.getTime()))return t;let n=/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(e);return n?new Date(`${n[1]}-${n[2]}-${n[3]}T${n[4]}:${n[5]}:${n[6]}Z`):null}function t(t,n=`—`){let r=e(t);return r?r.toLocaleString():n}function n(t,n=`—`){let r=e(t);return r?r.toLocaleDateString():n}export{t as n,n as t};
