@@ -120,9 +120,20 @@ try {
         try { Start-ScheduledTask -TaskName $agentTask -ErrorAction SilentlyContinue } catch {}
     }
     if (-not (Test-Port '127.0.0.1' $cfg.OcrAgentPort 800)) {
-        $startCmd = Join-Path $cfg.OcrAgentDir 'START-OCR-AGENT.cmd'
-        if (Test-Path $startCmd) {
-            Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Agent`" /MIN `"$startCmd`"" -WindowStyle Hidden
+        $hiddenAgent = Join-Path $cfg.OcrAgentDir 'start-ocr-agent-hidden.ps1'
+        if (Test-Path $hiddenAgent) {
+            Start-Process 'powershell.exe' -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                '-File', $hiddenAgent
+            ) -WindowStyle Hidden
+        } else {
+            $startCmd = Join-Path $cfg.OcrAgentDir 'START-OCR-AGENT.cmd'
+            if (Test-Path $startCmd) {
+                Start-Process 'powershell.exe' -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                    '-Command', "cmd /c `"$startCmd`""
+                ) -WindowStyle Hidden
+            }
         }
         $null = Wait-Until { Test-Port '127.0.0.1' $cfg.OcrAgentPort 800 } 30 'Starting OCR agent...'
     }
@@ -143,9 +154,12 @@ try {
             Where-Object { $_.CommandLine -and $_.CommandLine -like "*$($cfg.OcrTunnelRemotePort):127.0.0.1:$($cfg.OcrAgentPort)*" } |
             ForEach-Object { $tunAlive = $true }
         if (-not $tunAlive) {
-            $tunCmd = Join-Path $PSScriptRoot 'start-ocr-tunnel.cmd'
-            if (Test-Path $tunCmd) {
-                Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Tunnel`" /MIN `"$tunCmd`"" -WindowStyle Hidden
+            $hiddenTun = Join-Path $PSScriptRoot 'start-ocr-tunnel-hidden.ps1'
+            if (Test-Path $hiddenTun) {
+                Start-Process 'powershell.exe' -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                    '-File', $hiddenTun
+                ) -WindowStyle Hidden
             } else {
                 $tunArgs = '-i "{0}" -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -R {1}:127.0.0.1:{2} {3}@{4}' -f `
                     $cfg.SshKey, $cfg.OcrTunnelRemotePort, $cfg.OcrAgentPort, $cfg.LinuxUser, $cfg.LinuxHost

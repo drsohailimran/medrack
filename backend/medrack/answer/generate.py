@@ -33,6 +33,7 @@ Design notes:
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -54,6 +55,96 @@ logger = get_logger(__name__)
 # (medrack.config.RETRIEVAL_TOP_K is the same value, but we hard-code
 # here so the orchestrator is self-contained and test-friendly.)
 RETRIEVAL_TOP_K = 8
+
+
+def _clean_answer_text(text: str) -> str:
+    """Strip truncated tails that cause TruncationRule fails / ugly PDFs.
+
+    - Trailing empty bullets (``•`` / ``-`` alone)
+    - Trailing incomplete connector lines (``and``, ``including``, …)
+    - Incomplete last bullets cut by max_tokens (e.g. ``• HBNC is``)
+    - Orphan heading with no body after a cut-off
+    - Trailing ellipsis-only endings
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    empty_bullet = re.compile(r"^\s*[•\-\u2013\u2014\*]\s*$")
+    bullet_line = re.compile(r"^\s*[•\-\u2013\u2014\*]\s+\S")
+    connector_end = re.compile(
+        r"(?i)\b(and|or|with|include|includes|including|such as|e\.g\.|i\.e\.|"
+        r"is|are|was|were|to|of|for|the|a|an|in|on|by|as|from|that|which|"
+        r"this|these|those|its|their|has|have|had|be|been|being)\s*$"
+    )
+    # Complete sentence / bullet usually ends with . ! ? : ) or closing **
+    complete_end = re.compile(r"[.!?…:)\]]\s*$|\*\*\s*$")
+
+    def _drop_trailing_blanks() -> None:
+        while lines and not lines[-1].strip():
+            lines.pop()
+
+    def _is_incomplete_line(line: str) -> bool:
+        s = line.strip()
+        if not s:
+            return True
+        if empty_bullet.match(line):
+            return True
+        if connector_end.search(s):
+            return True
+        # Short bullet cut mid-thought (no terminal punctuation)
+        if bullet_line.match(line) and not complete_end.search(s) and len(s) < 80:
+            return True
+        # Any last line without sentence end and very short
+        if not complete_end.search(s) and len(s) < 40 and not s.endswith("**"):
+            return True
+        return False
+
+    # Drop trailing blank / empty bullets / incomplete last lines (token cut-off)
+    for _ in range(12):
+        _drop_trailing_blanks()
+        if not lines:
+            break
+        if _is_incomplete_line(lines[-1]):
+            lines.pop()
+            continue
+        break
+
+    # Drop orphan heading (bold / title) left with no body after cut-off
+    heading_re = re.compile(r"^\s*(\*\*[^*].+\*\*|#{1,3}\s+\S|[A-Z][A-Za-z0-9 /&-]{2,60})\s*$")
+    for _ in range(4):
+        _drop_trailing_blanks()
+        if not lines:
+            break
+        prev_blank = len(lines) >= 2 and not lines[-2].strip() if len(lines) >= 2 else True
+        if heading_re.match(lines[-1]) and not bullet_line.match(lines[-1]):
+            # heading with nothing under it
+            lines.pop()
+            continue
+        break
+
+    cleaned = "\n".join(lines).rstrip()
+    cleaned = re.sub(r"(\.\.\.|…)\s*$", "", cleaned).rstrip()
+    return cleaned
+
+
+def _retrieval_query_boost(question_text: str) -> str:
+    """Append topic cues so retrieval prefers the right Park chapters."""
+    q = question_text or ""
+    extras: list[str] = []
+    if re.search(r"(?i)\badolescent", q):
+        extras.append(
+            "RKSK ARSH Rashtriya Kishor Swasthya Karyakram "
+            "adolescent reproductive sexual health school health"
+        )
+    if re.search(r"(?i)\b(antenatal|anc)\b", q):
+        extras.append("antenatal care ANC objectives elements high risk pregnancy")
+    if re.search(r"(?i)\b(post\s*natal|postnatal|post\s*partal|pnc)\b", q):
+        extras.append("postnatal care postpartum mother newborn")
+    if re.search(r"(?i)\b(essential obstetric|emoc|bemoc|cemoc)\b", q):
+        extras.append("essential obstetric care EmOC RCH FRU JSSK")
+    if not extras:
+        return q
+    return q + "\n" + " ".join(extras)
 
 
 def _embed_query(question_text: str) -> list[float]:
@@ -286,20 +377,28 @@ def generate_answer(
                 cached.get("stale_reasons"), module_name, chapter, qid,
             )
 
-    # Step 2: embed the question text.
+    # Step 2: embed the question text (with topic boost for retrieval).
     logger.info(
         "Generating answer: module=%s chapter=%s qid=%s subject=%s",
         module_name, chapter, qid, subject,
     )
-    query_embedding = _embed_query(question_text)
+    retrieval_query = _retrieval_query_boost(question_text)
+    query_embedding = _embed_query(retrieval_query)
 
     # Step 3: adaptive retrieval (Phase 7). The retrieval engine
     # composes question analysis, strategy-based top_k + filter, and
     # metadata-boost reranking. The vector similarity remains the
     # primary mechanism; metadata is an additional signal.
     from medrack.retrieval import retrieve_for_question
+    # Use boosted text for analysis when helpful (keeps original stem in question dict).
+    q_for_retrieval = dict(question)
+    if retrieval_query != question_text:
+        q_for_retrieval = {
+            **question,
+            "question_text": retrieval_query,
+        }
     retrieval_result = retrieve_for_question(
-        question=question,
+        question=q_for_retrieval,
         subject=subject,
         query_embedding=query_embedding,
         marks=marks,
@@ -346,13 +445,16 @@ def generate_answer(
     # ~1.25–1.35 tokens/word is enough for point-form bullets + headings.
     _tw = target_word_count or 500
     _marks_i = int(marks) if marks is not None else (10 if _tw >= 500 else 5)
-    if _marks_i <= 5 or _tw <= 400:
-        # 5/3-mark: hard stop near upper band (~1.1 × target)
-        max_out = int(_tw * 1.20) + 200
+    if _marks_i <= 3 or _tw <= 150:
+        max_out = int(_tw * 1.30) + 100
+    elif _marks_i <= 5 or _tw <= 400:
+        # P0.5c: keep answers compact but leave headroom to *finish* the last
+        # bullet. Prior 551-token cap cut Q6 mid-phrase ("• HBNC is").
+        # ~1.4 tokens/word for markdown bullets → ~560 body + finish buffer.
+        max_out = int(_tw * 1.30) + 200  # 375 → ~687 tokens
     else:
-        # 10-mark: budget for ~upper_words (1.1×target), not 1.5×target essays
-        # 750 → ~825 words max ≈ ~1100–1200 tokens with headroom
-        max_out = int(_tw * 1.35) + 150  # 750 → ~1162 tokens (was ~1900)
+        # 10-mark: enough headroom for multi-part full depth within band
+        max_out = int(_tw * 1.40) + 200  # 750 → ~1250 tokens
     llm_response = llm_client.complete(build_result.prompt, max_output_tokens=max_out)
 
     # Build the cache key. Phase 3: includes PIPELINE_VERSIONS, subject,
@@ -371,6 +473,10 @@ def generate_answer(
     )
 
     # Step 6: assemble the answer dict.
+    # Clean truncated tails (empty bullets, mid-phrase cuts) before validate/cache.
+    if hasattr(llm_response, "text") and isinstance(llm_response.text, str):
+        llm_response.text = _clean_answer_text(llm_response.text)
+
     answer = build_answer_dict(
         question=question,
         module_name=module_name,

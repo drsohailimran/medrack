@@ -31,8 +31,11 @@ Write-Host 'Starting MedRack OCR Tunnel task...'
 try {
     Start-ScheduledTask -TaskName $cfg.OcrTunnelTaskName
 } catch {
-    $tun = Join-Path $PSScriptRoot 'start-ocr-tunnel.cmd'
-    Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Tunnel`" /MIN `"$tun`"" -WindowStyle Hidden
+    $hiddenTun = Join-Path $PSScriptRoot 'start-ocr-tunnel-hidden.ps1'
+    Start-Process 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        '-File', $hiddenTun
+    ) -WindowStyle Hidden
 }
 
 Start-Sleep -Seconds 5

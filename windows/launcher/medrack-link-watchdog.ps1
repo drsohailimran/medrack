@@ -43,10 +43,13 @@ if (-not $agentUp) {
         Start-ScheduledTask -TaskName 'MedRack OCR Agent' -ErrorAction Stop
     } catch {
         # Fallback: start cmd directly
-        $startCmd = Join-Path $cfg.OcrAgentDir 'START-OCR-AGENT.cmd'
-        if (Test-Path $startCmd) {
-            Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Agent`" /MIN `"$startCmd`"" -WindowStyle Hidden
-            Write-Log 'Started OCR agent via START-OCR-AGENT.cmd fallback'
+        $hiddenAgent = Join-Path $cfg.OcrAgentDir 'start-ocr-agent-hidden.ps1'
+        if (Test-Path $hiddenAgent) {
+            Start-Process 'powershell.exe' -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                '-File', $hiddenAgent
+            ) -WindowStyle Hidden
+            Write-Log 'Started OCR agent hidden (no console window)'
         } else {
             Write-Log ("Failed to start OCR agent: {0}" -f $_)
         }
@@ -70,10 +73,13 @@ if (-not $tunAlive) {
     try {
         Start-ScheduledTask -TaskName 'MedRack OCR Tunnel' -ErrorAction Stop
     } catch {
-        $tunCmd = Join-Path $PSScriptRoot 'start-ocr-tunnel.cmd'
-        if (Test-Path $tunCmd) {
-            Start-Process 'cmd.exe' -ArgumentList '/c', "start `"MedRack OCR Tunnel`" /MIN `"$tunCmd`"" -WindowStyle Hidden
-            Write-Log 'Started tunnel via start-ocr-tunnel.cmd fallback'
+        $hiddenTun = Join-Path $PSScriptRoot 'start-ocr-tunnel-hidden.ps1'
+        if (Test-Path $hiddenTun) {
+            Start-Process 'powershell.exe' -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                '-File', $hiddenTun
+            ) -WindowStyle Hidden
+            Write-Log 'Started tunnel hidden (no console window)'
         } else {
             Write-Log ("Failed to start tunnel: {0}" -f $_)
         }

@@ -352,10 +352,10 @@ EMBEDDING_DIM = 384
 #                  the LLM text is identical.
 PIPELINE_VERSIONS: dict[str, int] = {
     "schema": 3,     # P0: validation report + needs_review + kb_revision on answers
-    "prompt": 6,     # P0.4: 10-mark hard stop + anti laundry-list on open stems
+    "prompt": 7,     # P0.5: multi-part depth + aligned length bands + finish cleanly
     "retrieval": 1,  # current retrieval config (top_k=8, MiniLM-L6-v2)
     "planner": 0,    # not yet implemented
-    "validator": 5,  # P0.4: tighter 10-mark max + PPP/WASH allowlist
+    "validator": 7,  # P0.5b: ReferenceConsistency only explicit chunk cites
     "reranker": 0,   # not yet implemented
     "renderer": 1,   # current renderer (K. Park style, commit c668289)
 }

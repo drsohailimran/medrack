@@ -92,53 +92,39 @@ function Register-MedrackTask {
         -RestartInterval (New-TimeSpan -Minutes $RestartMinutes) `
         -StartWhenAvailable `
         -MultipleInstances IgnoreNew `
-        -DontStopOnIdleEnd
+        -DontStopOnIdleEnd `
+        -Hidden
 
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 
     Register-ScheduledTask -TaskName $Name -Action $action -Trigger $triggers `
         -Principal $principal -Settings $settings -Force | Out-Null
-    OK "Task '$Name' registered"
+    OK "Task '$Name' registered (hidden / no console)"
 }
 
-# ---------- OCR agent task ----------
-Section 'Scheduled Task: MedRack OCR Agent (always on)'
+# ---------- OCR agent task (hidden PowerShell — no desktop console) ----------
+Section 'Scheduled Task: MedRack OCR Agent (always on, hidden)'
 if (-not (Test-Path $cfg.OcrAgentPython) -or -not (Test-Path $cfg.OcrAgentScript)) {
     throw "OCR agent missing under $($cfg.OcrAgentDir)"
 }
-$ocrStart = Join-Path $cfg.OcrAgentDir 'START-OCR-AGENT.cmd'
-if (-not (Test-Path $ocrStart)) { throw "Missing $ocrStart" }
+$ocrHidden = Join-Path $cfg.OcrAgentDir 'start-ocr-agent-hidden.ps1'
+if (-not (Test-Path $ocrHidden)) { throw "Missing $ocrHidden" }
 
 Register-MedrackTask -Name 'MedRack OCR Agent' `
-    -Execute 'cmd.exe' `
-    -Argument ('/c "' + $ocrStart + '"') `
+    -Execute 'powershell.exe' `
+    -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ocrHidden`"") `
     -WorkDir $cfg.OcrAgentDir `
     -AtLogOn -AtStartup `
     -RestartMinutes 1
 
-# ---------- Tunnel backup task ----------
-Section 'Scheduled Task: MedRack OCR Tunnel (backup reverse SSH)'
-$tunCmd = Join-Path $PSScriptRoot 'start-ocr-tunnel.cmd'
-if (-not (Test-Path $tunCmd)) { throw "Missing $tunCmd" }
-# Update tunnel script paths from config
-@(
-    '@echo off',
-    'title MedRack OCR Tunnel (permanent)',
-    'set KEY=' + $cfg.SshKey,
-    'set REMOTE=' + $cfg.LinuxUser + '@' + $cfg.LinuxHost,
-    'set RPORT=' + $cfg.OcrTunnelRemotePort,
-    'set LPORT=' + $cfg.OcrAgentPort,
-    ':loop',
-    'echo [%date% %time%] Connecting reverse tunnel %RPORT% -^> 127.0.0.1:%LPORT% ...',
-    'ssh.exe -i "%KEY%" -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -R %RPORT%:127.0.0.1:%LPORT% %REMOTE%',
-    'echo [%date% %time%] Tunnel dropped (exit %ERRORLEVEL%). Reconnecting in 5s...',
-    'timeout /t 5 /nobreak >nul',
-    'goto loop'
-) | Set-Content -Path $tunCmd -Encoding ASCII
+# ---------- Tunnel backup task (hidden PowerShell — no desktop console) ----------
+Section 'Scheduled Task: MedRack OCR Tunnel (backup reverse SSH, hidden)'
+$tunHidden = Join-Path $PSScriptRoot 'start-ocr-tunnel-hidden.ps1'
+if (-not (Test-Path $tunHidden)) { throw "Missing $tunHidden" }
 
 Register-MedrackTask -Name 'MedRack OCR Tunnel' `
-    -Execute 'cmd.exe' `
-    -Argument ('/c "' + $tunCmd + '"') `
+    -Execute 'powershell.exe' `
+    -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tunHidden`"") `
     -WorkDir $PSScriptRoot `
     -AtLogOn -AtStartup `
     -RestartMinutes 1

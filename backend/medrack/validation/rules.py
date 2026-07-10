@@ -116,12 +116,10 @@ class Rule(ABC):
 def _split_into_sections(answer: str) -> List[Dict[str, str]]:
     """Split an answer into sections by heading.
 
-    A heading is a line that starts (after optional whitespace)
-    with a capitalized word followed by a colon (e.g.
-    ``"Management: ..."``). Case-insensitive: ``management:`` and
-    ``Management:`` are both recognized. The section's content is
-    everything from the heading line to the next heading line or
-    end of text.
+    A heading is any of:
+      - ``Management:`` / ``Definition:`` style (word + colon)
+      - Title Case line without a bullet (prompt style: ``Definition of X``)
+      - Markdown bold-only line: ``**Health Problems**``
 
     Returns a list of ``{"name": str, "content": str}`` dicts.
     """
@@ -130,21 +128,48 @@ def _split_into_sections(answer: str) -> List[Dict[str, str]]:
     sections: List[Dict[str, str]] = []
     current_name: Optional[str] = None
     current_content: List[str] = []
-    for line in answer.splitlines():
-        # Headings: a line that starts with a capitalized word and
-        # a colon, optionally indented. Case-insensitive.
-        m = re.match(r"^(\s*)([A-Z][A-Za-z][A-Za-z ]*?):\s*(.*)$", line, re.IGNORECASE)
+
+    # Colon heading
+    colon_re = re.compile(
+        r"^(\s*)([A-Z][A-Za-z][A-Za-z0-9 /&-]{0,60}?):\s*(.*)$"
+    )
+    # Markdown **Heading** alone on a line
+    md_bold_re = re.compile(r"^\s*\*\*([^*]{2,80})\*\*\s*$")
+    # Title-case heading line (no bullet), short, not a sentence ending in .
+    title_re = re.compile(
+        r"^\s*([A-Z][A-Za-z0-9][A-Za-z0-9 /&-]{1,60})\s*$"
+    )
+    bullet_start = re.compile(r"^\s*[•\-\u2013\u2014\*]\s+")
+
+    def _is_heading(line: str) -> Optional[str]:
+        if not line.strip() or bullet_start.match(line):
+            return None
+        m = colon_re.match(line)
         if m:
-            # Save the previous section
+            return m.group(2).strip()
+        m = md_bold_re.match(line)
+        if m:
+            return m.group(1).strip()
+        m = title_re.match(line)
+        if m:
+            name = m.group(1).strip()
+            # Avoid treating long sentences as headings
+            if name.endswith("."):
+                return None
+            words = name.split()
+            if 1 <= len(words) <= 10:
+                return name
+        return None
+
+    for line in answer.splitlines():
+        name = _is_heading(line)
+        if name is not None:
             if current_name is not None:
                 sections.append({
                     "name": current_name,
                     "content": "\n".join(current_content).strip(),
                 })
-            indent, name, _ = m.groups()
-            # Normalize the name to the canonical form (first letter
-            # capitalized) for consistent reporting.
-            current_name = name.strip().capitalize()
+            current_name = name
             current_content = [line]
         else:
             if current_name is not None:
@@ -577,22 +602,29 @@ class EmptySectionRule(Rule):
 # ----------------------------------------------------------------------
 
 class ReferenceConsistencyRule(Rule):
-    """Checks that all chunk references in the answer are valid.
+    """Checks explicit chunk citations (if any) are well-formed / unique.
 
-    A "chunk reference" is any alphanumeric token that looks like a
-    chunk id. The v1 implementation does not have access to the
-    full chunk list (that's the retrieval layer's job); the rule
-    just checks that all references are syntactically well-formed
-    and that no reference is duplicated within the same section.
+    Exam answers do **not** cite retrieval chunks — they use normal medical
+    vocabulary. Older regex treated every 6–16 letter word (e.g. ``pregnancy``,
+    ``antenatal``) as a chunk id, so repeated words → false FAIL
+    ``duplicate chunk references``.
 
-    Future phases can extend this rule to validate against the
-    actual retrieved chunk list.
+    P0.5: only match **explicit** citation forms:
+      - ``chunk_abc123`` / ``chunk-abc123``
+      - ``[chunk_abc123]`` / ``[abc123def]`` (bracket citation)
+    If the answer has no such citations, PASS (normal for theory answers).
     """
 
     name = "ReferenceConsistencyRule"
 
-    # The same regex as EvidenceCoverageRule
-    CHUNK_REF_RE = re.compile(r"\b(?:chunk[_-]?)?([A-Za-z0-9]{6,16})\b")
+    # Explicit only — never bare English words
+    CHUNK_REF_RE = re.compile(
+        r"(?:"
+        r"\bchunk[_-]([A-Za-z0-9]{4,24})\b"  # chunk_id / chunk-id
+        r"|\[(?:chunk[_-]?)?([A-Za-z0-9]{6,24})\]"  # [chunk_id] or [hexid]
+        r")",
+        re.IGNORECASE,
+    )
 
     def check(
         self,
@@ -601,11 +633,25 @@ class ReferenceConsistencyRule(Rule):
         context: Optional[Dict[str, Any]] = None,
     ) -> ValidationResult:
         sections = _split_into_sections(answer)
+        if not sections:
+            # No headings → check whole answer once
+            sections = [{"name": "(body)", "content": answer or ""}]
+
+        def _tokens(text: str) -> List[str]:
+            out: List[str] = []
+            for m in self.CHUNK_REF_RE.finditer(text or ""):
+                tok = m.group(1) or m.group(2)
+                if tok:
+                    out.append(tok.lower())
+            return out
+
+        any_refs = False
         offending: List[Dict[str, Any]] = []
         for s in sections:
-            tokens = self.CHUNK_REF_RE.findall(s["content"])
+            tokens = _tokens(s["content"])
+            if tokens:
+                any_refs = True
             if len(tokens) != len(set(tokens)):
-                # Duplicates within a single section
                 counts: Dict[str, int] = {}
                 for t in tokens:
                     counts[t] = counts.get(t, 0) + 1
@@ -614,6 +660,12 @@ class ReferenceConsistencyRule(Rule):
                     "section": s["name"],
                     "duplicates": dupes,
                 })
+        if not any_refs:
+            return ValidationResult(
+                rule_name=self.name,
+                severity=Severity.PASS,
+                message="No explicit chunk citations (normal for exam answers)",
+            )
         if offending:
             return ValidationResult(
                 rule_name=self.name,
@@ -634,15 +686,17 @@ class ReferenceConsistencyRule(Rule):
 
 # Hard length bands by marks (words). Used when context has no target_word_count.
 # Min catches half-length 10-mark answers; max catches 5-mark mini-textbooks.
+# P0.5: 5-mark max widened (false "scope creep" at 409–450); 5-mark min slightly
+# softer so 240-word compact answers pass.
 _SCOPE_MIN_WORDS = {
     3: 80,
-    5: 250,   # P0.3: floor when no target; with target 5-mark uses ~0.68×target
-    10: 550,
+    5: 240,
+    10: 520,
 }
 _SCOPE_MAX_WORDS = {
-    3: 200,
-    5: 410,   # P0.3: slightly tighter hard max for 5-mark
-    10: 850,  # P0.4: 10-mark hard max (was 900); target 750 → +15% = 862, min of these
+    3: 220,
+    5: 460,
+    10: 850,
 }
 
 # Acronyms / tokens that are safe even if not in the retrieved chunk text.
@@ -673,6 +727,12 @@ _GROUNDING_ALLOWLIST: Set[str] = {
     "PMMVY", "SUMAN", "LAQSHYA", "PMSMA", "JSSK", "JSY", "MCTS", "RBSK",
     "PPP", "NGO", "NGOS", "WASH", "IMNCI", "IMCI", "PMTCT", "PPTCT",
     "ART", "ARV", "VHND", "MCP", "ANMOL", "UIP",
+    # Adolescent / school / nutrition campaigns
+    "NDD",  # National Deworming Day
+    "AFHS", "PE", "WIFS",
+    "NAHP",  # National Adolescent Health Programme (legacy / umbrella phrasing)
+    "ICTC",  # Integrated Counselling and Testing Centre
+    "PPTCT", "PMTCT", "ART", "STI", "RTI",
 }
 
 # Full scheme titles (lowercase) that are known real Indian programmes —
@@ -696,6 +756,9 @@ _KNOWN_SCHEME_TITLES: Set[str] = {
     "school health and wellness programme",
     "menstrual hygiene scheme",
     "menstrual hygiene mission",
+    "national deworming day",
+    "adolescent reproductive and sexual health",
+    "adolescent friendly health clinics",
     "surakshit matritva ashashwasan",
     "labour room quality improvement initiative",
     "pradhan mantri surakshit matritva abhiyan",
@@ -766,17 +829,16 @@ class ScopeLengthRule(Rule):
             try:
                 tgt_i = int(tgt)
                 if tgt_i > 0:
-                    # P0.3 band vs target:
-                    # 10-mark: min 75% / max +15% (need full depth)
-                    # 5-mark:  min 68% / max +8%  (compact; 262-word Q3 should pass)
+                    # P0.5 band vs target:
+                    # 10-mark: min 70% / max +12% (full depth; multi-part still needs ~520+)
+                    # 5-mark:  min 64% / max +18% (reduce false over-long at ~410–440)
                     # 3-mark:  min 70% / max +10%
                     if band == 10:
-                        min_words = max(min_words, int(tgt_i * 0.75))
-                        # P0.4: tighter 10-mark ceiling (+12%, not +15%)
+                        min_words = max(min_words, int(tgt_i * 0.70))  # 750 → 525
                         tgt_max = int(tgt_i * 1.12)  # 750 → 840
                     elif band == 5:
-                        min_words = max(min_words, int(tgt_i * 0.68))  # 375 → 255
-                        tgt_max = int(tgt_i * 1.08)  # 375 → 405
+                        min_words = max(min_words, int(tgt_i * 0.64))  # 375 → 240
+                        tgt_max = int(tgt_i * 1.22)  # 375 → 457
                     else:
                         min_words = max(min_words, int(tgt_i * 0.70))
                         tgt_max = int(tgt_i * 1.10)
@@ -970,14 +1032,27 @@ class TruncationRule(Rule):
         # Unclosed code fence
         if text.count("```") % 2 == 1:
             issues.append("unclosed code fence")
-        # Ends with connector / incomplete bullet
+        # Ends with connector / incomplete bullet / mid-sentence cut (token limit)
         if re.search(
-            r"(?i)\b(and|or|with|include|includes|including|such as|e\.g\.|i\.e\.)\s*$",
+            r"(?i)\b(and|or|with|include|includes|including|such as|e\.g\.|i\.e\.|"
+            r"is|are|was|were|to|of|for|the|a|an|in|on|by|as|from|that|which|"
+            r"this|these|those|has|have|had|be|been|being)\s*$",
             text,
         ):
-            issues.append("ends with connector word")
+            issues.append("ends with incomplete word/phrase")
         if re.search(r"[•\-–—]\s*$", text):
             issues.append("ends with empty bullet marker")
+        # Last non-empty line is a short bullet without terminal punctuation
+        last = ""
+        for line in reversed(text.splitlines()):
+            if line.strip():
+                last = line.strip()
+                break
+        if re.match(r"^[•\-–—\*]\s+\S", last) and not re.search(
+            r"[.!?…:)\]]\s*$|\*\*\s*$", last
+        ):
+            if len(last) < 80:
+                issues.append("last bullet looks cut off mid-sentence")
         # Ends mid-word ellipsis spam
         if text.endswith("...") or text.endswith("…"):
             issues.append("ends with ellipsis")

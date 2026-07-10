@@ -499,6 +499,93 @@ def _merge_questions(llm_questions: list, regex_questions: list, name: str, subj
     return merged
 
 
+def _pdf_native_text_stats(pdf: Path, sample_pages: int = 5) -> Dict[str, Any]:
+    """Quick sample of native PDF text (no OCR) to decide hybrid need."""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf))
+        n = len(reader.pages)
+        idxs = list(range(min(n, sample_pages)))
+        if n > sample_pages:
+            idxs = sorted(set([0, n // 2, n - 1] + list(range(min(3, n)))))
+        chars = []
+        for i in idxs:
+            if 0 <= i < n:
+                t = reader.pages[i].extract_text() or ""
+                chars.append(len(t.strip()))
+        avg = (sum(chars) / len(chars)) if chars else 0.0
+        return {
+            "pages": n,
+            "sample_pages": len(chars),
+            "avg_chars": round(avg, 1),
+            "max_chars": max(chars) if chars else 0,
+            "has_text_layer": avg >= 80 or (max(chars) if chars else 0) >= 120,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "pages": 0,
+            "sample_pages": 0,
+            "avg_chars": 0.0,
+            "max_chars": 0,
+            "has_text_layer": False,
+            "error": str(exc),
+        }
+
+
+def _assign_section_marks(pages: List[dict], questions: List[dict]) -> List[dict]:
+    """Fill missing marks from nearby section headers (e.g. '10 Marks', '5 marks')."""
+    import re
+
+    if not questions:
+        return questions
+    full = "\n".join((p.get("text") or "") for p in pages)
+    # Split into blocks by numbered questions; carry forward last marks header
+    # Simpler: for each question stem, search preceding window in full text
+    mark_header = re.compile(
+        r"(?:(\d+)\s*[-–]?\s*marks?|marks?\s*[-–:]?\s*(\d+)|"
+        r"long\s+answer[^\n]{0,40}?(\d+)\s*marks?|"
+        r"short\s+(?:note|answer)[^\n]{0,40}?(\d+)\s*marks?)",
+        re.IGNORECASE,
+    )
+    # Build list of (pos, marks) from headers in full text
+    headers: List[tuple[int, int]] = []
+    for m in mark_header.finditer(full):
+        g = next((g for g in m.groups() if g), None)
+        if g:
+            try:
+                headers.append((m.start(), int(g)))
+            except ValueError:
+                pass
+    if not headers:
+        return questions
+
+    for q in questions:
+        cur = q.get("marks")
+        if cur not in (None, 0, "", "null"):
+            continue
+        stem = (q.get("question_text") or "").strip()
+        if not stem:
+            continue
+        # find first 40 chars of stem in full text
+        key = stem[:40]
+        pos = full.find(key)
+        if pos < 0:
+            pos = full.lower().find(key.lower())
+        if pos < 0:
+            continue
+        # last header before this question
+        best = None
+        for hpos, hmarks in headers:
+            if hpos <= pos:
+                best = hmarks
+            else:
+                break
+        if best:
+            q["marks"] = best
+    return questions
+
+
 def run_extract_bank(
     job,
     progress: Progress,
@@ -513,8 +600,9 @@ def run_extract_bank(
 ) -> Dict[str, Any]:
     """Extract questions from a bank PDF.
 
-    If ``hybrid_ocr`` is True (scanned papers), run Windows RapidOCR (+ auto
-    Marker) first so extraction sees a real text layer, then LLM/regex extract.
+    Hybrid OCR is used for **scans**. If the PDF already has a usable native
+    text layer, hybrid is skipped (running OCR on text PDFs can destroy
+    extractable questions and leave question_count=0).
     """
     from medrack import config
     from medrack.dashboard.services.preflight import assert_disk_space, validate_subject
@@ -536,16 +624,37 @@ def run_extract_bank(
     modules_dir.mkdir(parents=True, exist_ok=True)
     safe = _safe_stem(name)
     dest = modules_dir / f"{safe}.pdf"
+    original_path = modules_dir / f"{safe}_original.pdf"
     progress(1, "Saving upload")
     dest.write_bytes(pdf_bytes)
+    try:
+        original_path.write_bytes(pdf_bytes)
+    except Exception:  # noqa: BLE001
+        pass
 
-    ocr_meta: Dict[str, Any] = {"hybrid_ocr": bool(hybrid_ocr)}
+    ocr_meta: Dict[str, Any] = {
+        "hybrid_ocr_requested": bool(hybrid_ocr),
+        "hybrid_ocr": False,
+    }
     extract_src = dest
     text_lo, text_hi = 4.0, 70.0
+    warning: Optional[str] = None
 
-    if hybrid_ocr:
+    # Decide whether hybrid OCR is actually needed
+    text_stats = _pdf_native_text_stats(dest)
+    ocr_meta["native_text"] = text_stats
+    do_hybrid = bool(hybrid_ocr)
+    if hybrid_ocr and text_stats.get("has_text_layer"):
+        do_hybrid = False
+        ocr_meta["hybrid_skipped_reason"] = (
+            f"PDF already has text layer (avg {text_stats.get('avg_chars')} chars/page) "
+            "— hybrid OCR skipped so questions are not destroyed"
+        )
+        progress(3, ocr_meta["hybrid_skipped_reason"])
+        logger.info("extract_bank skip hybrid: %s", ocr_meta["hybrid_skipped_reason"])
+
+    if do_hybrid:
         progress(2, "Hybrid OCR for scanned question bank…")
-        # Keep original scan as modules/{safe}_scan.pdf
         scan_path = modules_dir / f"{safe}_scan.pdf"
         try:
             if not scan_path.exists() or scan_path.resolve() != dest.resolve():
@@ -563,9 +672,9 @@ def run_extract_bank(
         )
         clean_path = modules_dir / f"{safe}_hybrid_ocr.pdf"
         clean_path.write_bytes(ocr["clean_bytes"])
-        # Prefer clean text PDF for extraction
         dest.write_bytes(ocr["clean_bytes"])
         extract_src = clean_path
+        ocr_meta["hybrid_ocr"] = True
         ocr_meta.update(
             {
                 "ocr_mode": ocr.get("mode"),
@@ -577,41 +686,65 @@ def run_extract_bank(
                 "scan_pdf": str(scan_path),
             }
         )
-        progress(64, f"OCR done — extracting questions from clean text PDF…")
+        progress(64, "OCR done — extracting questions from clean text PDF…")
         text_lo, text_hi = 64.0, 78.0
 
-    raw_pages = _extract_pages_with_progress(extract_src, progress, text_lo, text_hi)
-    pages = clean_mod.clean_pages(raw_pages)
-    if not pages:
+    def _extract_from(src: Path, lo: float, hi: float) -> tuple[list, list, list, Optional[str]]:
+        raw = _extract_pages_with_progress(src, progress, lo, hi)
+        pgs = clean_mod.clean_pages(raw)
+        if not pgs:
+            return [], [], [], "no pages"
+        progress(min(hi + 2, 80), "Extracting questions (patterns)")
+        regex_q = extract_mcqs_from_pages(pgs) or []
+        progress(min(hi + 4, 88), "Extracting questions (LLM)")
+        llm_q: list = []
+        warn: Optional[str] = None
+
+        def _llm_progress(i: int, n: int) -> None:
+            base = min(hi + 4, 88)
+            pct = base + int((93 - base) * i / max(n, 1))
+            progress(min(pct, 93), f"Extracting questions (LLM) — batch {i}/{n}")
+
+        try:
+            llm_q = extract_questions_with_llm(
+                pages_text=[p.get("text", "") for p in pgs],
+                subject=subject,
+                llm_client=_StrLLM(get_llm_client()),
+                progress_cb=_llm_progress,
+            ) or []
+        except Exception as exc:  # noqa: BLE001
+            warn = f"LLM question extraction skipped: {exc}"
+        merged_q = _merge_questions(llm_q, regex_q, name, subject)
+        merged_q = _assign_section_marks(pgs, merged_q)
+        return pgs, regex_q, merged_q, warn
+
+    pages, regex_questions, merged, warn = _extract_from(extract_src, text_lo, text_hi)
+    if warn:
+        warning = warn
+
+    # Fallback: hybrid (or bad OCR PDF) produced 0 questions but original may work
+    if not merged and original_path.is_file() and (
+        do_hybrid or extract_src.resolve() != original_path.resolve()
+    ):
+        progress(85, "No questions from OCR PDF — retrying on original PDF…")
+        ocr_meta["fallback_original"] = True
+        pages2, regex2, merged2, warn2 = _extract_from(original_path, 85.0, 92.0)
+        if merged2:
+            pages, regex_questions, merged = pages2, regex2, merged2
+            extract_src = original_path
+            # restore original as dest for transparency
+            try:
+                dest.write_bytes(original_path.read_bytes())
+            except Exception:  # noqa: BLE001
+                pass
+        if warn2:
+            warning = (warning + "; " if warning else "") + warn2
+
+    if not pages and not merged:
         raise ValueError(
             "The PDF had no extractable text pages. "
             "For scans, enable Hybrid OCR on upload (and ensure the OCR agent is running)."
         )
-
-    progress(80 if hybrid_ocr else 74, "Extracting questions (patterns)")
-    regex_questions = extract_mcqs_from_pages(pages) or []
-
-    progress(82 if hybrid_ocr else 80, "Extracting questions (LLM)")
-    llm_questions: list = []
-    warning: Optional[str] = None
-
-    def _llm_progress(i: int, n: int) -> None:
-        # Map batch progress across the 82-93% band (hybrid) or 80-93%.
-        base = 82 if hybrid_ocr else 80
-        pct = base + int((93 - base) * i / max(n, 1))
-        progress(min(pct, 93), f"Extracting questions (LLM) — batch {i}/{n}")
-
-    try:
-        llm_questions = extract_questions_with_llm(
-            pages_text=[p.get("text", "") for p in pages],
-            subject=subject,
-            llm_client=_StrLLM(get_llm_client()),
-            progress_cb=_llm_progress,
-        ) or []
-    except Exception as exc:  # noqa: BLE001
-        warning = f"LLM question extraction skipped: {exc}"
-
-    merged = _merge_questions(llm_questions, regex_questions, name, subject)
 
     progress(94, "Saving question bank")
     ds_dir = home / "tests" / "regression_datasets"
@@ -624,7 +757,8 @@ def run_extract_bank(
         "path": str(bank_path),
         "questions": merged,
         "_created": "API run_extract_bank",
-        "hybrid_ocr": bool(hybrid_ocr),
+        "hybrid_ocr": bool(ocr_meta.get("hybrid_ocr")),
+        "hybrid_ocr_requested": bool(hybrid_ocr),
     }
     bank_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     progress(96, "Verifying question bank…")

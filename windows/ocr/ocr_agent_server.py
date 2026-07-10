@@ -35,9 +35,11 @@ TOKEN = os.environ.get("MEDRACK_OCR_TOKEN", "medrack-ocr")
 HEADERS = {"X-OCR-Token": TOKEN}
 ENABLE_PULL = os.environ.get("MEDRACK_OCR_PULL", "1").strip() not in ("0", "false", "no")
 
-app = FastAPI(title="MedRack OCR Agent", version="1.2.0")
+app = FastAPI(title="MedRack OCR Agent", version="1.3.1")
 _lock = threading.Lock()
 _jobs: Dict[str, Dict[str, Any]] = {}
+# Only one OCR job at a time — never stack OCR while previous still holds GPU/RAM
+_pipeline_lock = threading.Lock()
 
 
 def _job_dir(job_id: str) -> Path:
@@ -69,14 +71,49 @@ def _set_job(job_id: str, **kwargs: Any) -> None:
 
 
 def _run_pipeline(job_id: str, src: Path, use_marker: bool) -> None:
+    from pipeline import model_control
     from pipeline.hybrid_ocr import run_hybrid_pipeline
 
-    _set_job(job_id, status="running", percent=0.5, message="Stopping Qwopus…")
+    got = _pipeline_lock.acquire(blocking=False)
+    if not got:
+        _set_job(
+            job_id,
+            status="error",
+            error="Another OCR job is already running",
+            message="error: OCR agent busy — wait for current job to finish",
+        )
+        return
+
+    _set_job(
+        job_id,
+        status="running",
+        percent=0.2,
+        message="Stopping Qwopus and freeing RAM before OCR…",
+    )
 
     def progress(pct: float, msg: str = "") -> None:
         _set_job(job_id, status="running", percent=float(pct), message=msg or "")
 
     try:
+        # Explicit pre-stop in the agent so UI shows phase early and we never
+        # load RapidOCR while llama still holds mlock + VRAM.
+        stop = model_control.stop_model(timeout_sec=120.0)
+        if not stop.get("ok"):
+            raise RuntimeError(
+                "Qwopus stop/RAM free failed — OCR not started (prevents system crash). "
+                + str(stop.get("error") or stop)
+            )
+        _set_job(
+            job_id,
+            status="running",
+            percent=3.0,
+            message=(
+                "Qwopus stopped; RAM free "
+                f"{stop.get('free_ram_mb_after')} MiB — starting OCR"
+            ),
+            model_stop=stop,
+        )
+
         result = run_hybrid_pipeline(
             src,
             _job_dir(job_id) / "work",
@@ -84,14 +121,28 @@ def _run_pipeline(job_id: str, src: Path, use_marker: bool) -> None:
             progress=progress,
             restart_model=True,
         )
+        if isinstance(result, dict) and "model_stop" not in result:
+            result["model_stop"] = stop
         clean = Path(result["clean_pdf"])
         dest = _job_dir(job_id) / "clean_text.pdf"
         if clean.is_file():
             dest.write_bytes(clean.read_bytes())
             result["clean_pdf"] = str(dest)
-        _set_job(job_id, status="done", percent=100.0, message="Done — model restarted", result=result)
+        _set_job(
+            job_id,
+            status="done",
+            percent=100.0,
+            message="Done — model restarted",
+            result=result,
+        )
     except Exception as exc:  # noqa: BLE001
+        try:
+            model_control.stop_model(timeout_sec=15.0)
+        except Exception:  # noqa: BLE001
+            pass
         _set_job(job_id, status="error", error=str(exc), message=f"error: {exc}")
+    finally:
+        _pipeline_lock.release()
 
 
 @app.get("/v1/health")
@@ -101,9 +152,10 @@ def health():
     return {
         "ok": True,
         "service": "medrack-ocr-agent",
-        "version": "1.2.0",
+        "version": "1.3.1",
         "auto_marker": True,
         "pull_loop": ENABLE_PULL,
+        "pipeline_busy": _pipeline_lock.locked(),
         "model": model_control.model_status(),
     }
 

@@ -682,11 +682,32 @@ def run_hybrid_pipeline(
 
     try:
         if progress:
-            progress(1, "Stopping Qwopus (free GPU for OCR)")
-        stop_info = model_control.stop_model()
+            progress(1, "Stopping Qwopus (free GPU + RAM for OCR)…")
+        stop_info = model_control.stop_model(timeout_sec=120.0)
+        if not stop_info.get("ok"):
+            # HARD FAIL — never run OCR while llama still holds RAM/VRAM
+            raise RuntimeError(
+                "Refusing to start OCR: Qwopus was not fully stopped / memory not freed. "
+                + str(stop_info.get("error") or stop_info)
+            )
 
         if progress:
-            progress(4, "Starting RapidOCR full-book pass")
+            free_mb = stop_info.get("free_ram_mb_after")
+            gpu = stop_info.get("gpu_after") or {}
+            gpu_free = gpu.get("free_mib")
+            msg = "Qwopus stopped"
+            if free_mb is not None:
+                msg += f" — free RAM {float(free_mb):.0f} MiB"
+            if gpu_free is not None:
+                msg += f", GPU free {float(gpu_free):.0f} MiB"
+            progress(2.5, msg + ". Verifying before OCR…")
+
+        # Final gate immediately before loading RapidOCR/torch
+        ready = model_control.assert_ready_for_ocr()
+        stop_info["ready_check"] = ready
+
+        if progress:
+            progress(4, "Starting RapidOCR full-book pass (model confirmed down)")
         pages = rapidocr_book(
             pdf_path, cache, progress=progress, progress_lo=5, progress_hi=70
         )

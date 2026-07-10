@@ -16,6 +16,7 @@ Subject-awareness (Phase 2, directive v1.0):
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 import tiktoken
@@ -92,11 +93,13 @@ Write a {marks}-mark exam answer in point form (headings + bullets).
 - Prefer the middle of the band ({word_count_target} ± 10%). Hitting only ~50% of a 10-mark target is FAILED. Exceeding {upper_words} is also FAILED (for both 5-mark and 10-mark).
 - Do NOT fill space with endless bullets. Depth means better bullets on the asked topic, not more unrelated programmes.
 - A table or flowchart is EXTRA and does NOT count toward the word target; it must not replace the written explanation.
+- FINISH cleanly: last line must be a complete sentence or bullet. Never end with a lone "•" or "–" or mid-phrase connector.
 
 ## SCOPE CONTROL (mandatory — quality over completeness)
 - Answer ONLY what the question asks. Do not expand into a full chapter, full RMNCH laundry list, or related programmes unless the question explicitly asks for them.
 - If the question is narrow (e.g. "objectives of ANC", "definition of …", "components of …"), stay inside that narrow ask. Do NOT add unrelated schemes, levels of care, or entire programme reviews.
 - Do NOT invent or pad with programmes that are only loosely related to the stem.
+- Never drag in unrelated national programmes (e.g. elderly NPHCE on an adolescent stem, newborn EmONC blocks on a pure "objectives of ANC" stem).
 - Mark structure rules (still obey the LENGTH BAND above):
   - 3-mark: VERY short structure — 3-5 crisp bullets, no long intro, no separate Conclusion unless needed. ~{word_count_target} words total.
   - 5-mark: **STRICT COMPACT** — this is NOT a 10-mark essay.
@@ -105,12 +108,13 @@ Write a {marks}-mark exam answer in point form (headings + bullets).
     - No "Challenges", "Future Directions", "National Programmes", "Indian Context and Data", or "Strategic Interventions for Newborn Survival" sections unless the stem asks for them.
     - No digression into labour/newborn/EmOC stats unless the stem is about those topics.
     - For list stems ("objectives", "elements", "components"): enumerate the list; do NOT add a second half-chapter of programmes/data.
-    - Hard stop: do not exceed **{upper_words} words**. Prefer finishing at ~{word_count_target} words.
+    - Hard stop: do not exceed **{upper_words} words**. Prefer finishing at ~{word_count_target} words (about 350–400 for typical 5-mark).
   - 10-mark: **full depth within the band** — **4–6 headings**, several bullets each, Indian context when relevant, ending in Conclusion. Multi-part stems (a/b/c) need a balanced section per part. ~{word_count_target} words total — do not write a 5-mark answer for a 10-mark stem.
     - Even open stems ("services under RCH-II", "discuss …") must stop by **{upper_words}**. Cap at **~15–25 bullets total**, not 50–100.
     - Cover the asked concept thoroughly; do **not** append a laundry list of every NHM/newborn/HIV/WASH/FP programme unless the stem asks for those topics.
     - Prefer 2–4 named schemes that appear in SOURCE MATERIAL over a long catalogue.
     - When you have covered definition + key services/components + brief Indian context + conclusion, **STOP**.
+{multipart_block}
 
 ## HARD GROUNDING (mandatory — no fabrication)
 - Name a specific scheme, programme, law, act, guideline, or statistic ONLY if it appears in the SOURCE MATERIAL below, OR it is a universally standard textbook fact (e.g. WHO definition of health, basic epidemiological triad).
@@ -118,6 +122,7 @@ Write a {marks}-mark exam answer in point form (headings + bullets).
 - NEVER use non-Indian programmes (e.g. US PRAMS, Medicaid, Medicare) for Indian MBBS answers.
 - Never invent numbers. If unsure of a figure, describe the trend qualitatively.
 - Prefer SOURCE MATERIAL over memory when they conflict.
+- Only name schemes that fit the stem topic (e.g. adolescent → RKSK/ARSH if in sources; not elderly or unrelated NHM programmes).
 
 FORMAT (point form — NO long paragraphs):
 - Use "•" bullets (~10-25 words each, one idea per bullet).
@@ -236,6 +241,49 @@ def _format_mcq_prompt(
     )
 
 
+def _is_multipart_question(question_text: str) -> bool:
+    """Detect multi-part stems that need balanced sections and full 10-mark depth."""
+    q = question_text or ""
+    if q.count("?") >= 2:
+        return True
+    if re.search(
+        r"(?i)\b(a\)|b\)|c\)|\(a\)|\(b\)|\(c\)|part\s*[abc123]|section\s*[abc])\b",
+        q,
+    ):
+        return True
+    # "What …? Mention … Outline …" style
+    if re.search(
+        r"(?i)\?\s*(Mention|Outline|Enumerate|Describe|Explain|List|Write|Discuss)\b",
+        q,
+    ):
+        return True
+    # Multiple imperative verbs separated by period/semicolon
+    if len(re.findall(
+        r"(?i)\b(Mention|Outline|Enumerate|Describe|Explain|List|Define|What are|What is)\b",
+        q,
+    )) >= 2:
+        return True
+    return False
+
+
+def _multipart_block(question_text: str, marks: int, word_count_target: int) -> str:
+    if marks < 10 or not _is_multipart_question(question_text):
+        return ""
+    # Rough per-part floor so multi-part 10-mark answers do not undershoot
+    per = max(180, int(word_count_target * 0.28))
+    return (
+        "\n## MULTI-PART STEM (mandatory)\n"
+        "- This question has **multiple distinct asks**. Create a **separate heading "
+        "for each part** (do not merge into one short essay).\n"
+        f"- Each major part needs roughly **{per}+ words** of on-topic bullets so the "
+        f"whole answer reaches the HARD MINIMUM (do not write a thin 5-mark total).\n"
+        "- Balance depth across parts; do not answer only the first clause fully.\n"
+        "- Name only programmes relevant to the stem topic that appear in SOURCE "
+        "MATERIAL (e.g. adolescent health → RKSK/ARSH if present — never unrelated "
+        "schemes such as elderly NPHCE).\n"
+    )
+
+
 def _format_theory_prompt(
     question_text: str,
     retrieved_chunks_text: str,
@@ -243,12 +291,22 @@ def _format_theory_prompt(
     word_count_target: int,
     subject_ctx: dict[str, str],
 ) -> str:
+    # Align prompt band with ScopeLengthRule (P0.5)
+    if marks <= 3:
+        lower = int(word_count_target * 0.70)
+        upper = int(word_count_target * 1.10)
+    elif marks <= 5:
+        lower = int(word_count_target * 0.64)
+        upper = int(word_count_target * 1.18)
+    else:
+        lower = int(word_count_target * 0.70)
+        upper = int(word_count_target * 1.12)
     return THEORY_ANSWER_PROMPT.format(
         display=subject_ctx["display"],
         reference_text=subject_ctx["reference_text"],
         word_count_target=word_count_target,
-        lower_words=int(word_count_target * 0.9),
-        upper_words=int(word_count_target * 1.1),
+        lower_words=lower,
+        upper_words=upper,
         retrieved_chunks=retrieved_chunks_text,
         question=question_text,
         marks=marks,
@@ -259,6 +317,7 @@ def _format_theory_prompt(
             subject_ctx.get("answer_structure")
             or SUBJECT_CONTEXTS["generic"]["answer_structure"]
         ),
+        multipart_block=_multipart_block(question_text, marks, word_count_target),
     )
 
 

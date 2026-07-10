@@ -1,10 +1,6 @@
 @echo off
-title MedRack OCR Agent
+REM Thin launcher — always starts the agent HIDDEN (no desktop console).
+REM Scheduled Task / Start MedRack / watchdog all use this entry point.
 cd /d C:\Medrack\ocr
-set PYTHONPATH=C:\Medrack\ocr
-set MEDRACK_API_BASE=http://192.168.29.82:8010/api/v1
-set MEDRACK_OCR_TOKEN=medrack-ocr
-set MEDRACK_OCR_PULL=1
-echo MedRack OCR Agent ? port 8090
-"C:\Medrack\ocr\venv\Scripts\python.exe" "C:\Medrack\ocr\ocr_agent_server.py"
-if errorlevel 1 pause
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Medrack\ocr\start-ocr-agent-hidden.ps1"
+exit /b %ERRORLEVEL%
