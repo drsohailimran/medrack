@@ -106,14 +106,34 @@ def run_ingest_book(
 
     progress(2, "Hashing PDF")
     sha256 = hashlib.sha256(pdf.read_bytes()).hexdigest()
-    existing = manifest.get_book(sha256)
-    if existing is not None and not existing.get("archived_at"):
+    # Re-ingest handling: a PDF may already be indexed (active) under one or
+    # more manifest records with this sha. Archive every active copy AND purge
+    # its Chroma vectors so ``replace`` never leaves orphaned/duplicate chunks.
+    # (Use list_books, not get_book, whose first-match may be an archived record
+    # ordered ahead of the live one — that pitfall left duplicate kb_ vectors.)
+    active_dupes = [
+        b
+        for b in manifest.list_books(include_archived=False)
+        if b.get("sha256") == sha256
+    ]
+    if active_dupes:
         if not replace:
             raise ValueError(
                 "This book is already in the knowledge base. "
                 "Enable 'Replace' to archive the old copy and re-ingest."
             )
-        manifest.archive_book(sha256)
+        for _b in active_dupes:
+            _old_bid = _b.get("book_id")
+            if _old_bid:
+                try:
+                    index_mod.delete_book_chunks(subj.value, _old_bid)
+                    logger.info("replace: purged old chunks for book %s", _old_bid)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "replace: purge failed for %s: %s", _old_bid, exc
+                    )
+        while manifest.archive_book(sha256):
+            pass
 
     progress(4, "Detecting format")
     format_detect.detect_format(pdf, sample_pages=5)
@@ -396,6 +416,32 @@ def run_hybrid_ingest_book(
     from medrack.config import get_medrack_home
 
     pdf = Path(pdf_path).expanduser()
+    # Auto-skip hybrid OCR when the PDF already has a usable native text
+    # layer. Image OCR on a digital PDF loses ~half the pages and trips the
+    # OCR quality gate (nonempty<85%). Mirrors the question-bank auto-skip.
+    text_stats = _pdf_native_text_stats(pdf)
+    if text_stats.get("has_text_layer"):
+        avg = text_stats.get("avg_chars")
+        reason = (
+            f"PDF already has a native text layer "
+            f"(avg {avg} chars/page) — hybrid OCR "
+            "skipped; ingesting native text directly."
+        )
+        progress(2, reason)
+        logger.info("hybrid_ingest_book skip hybrid: %s", reason)
+        result = run_ingest_book(
+            job,
+            progress,
+            pdf_path=str(pdf),
+            subject=subject,
+            title=title,
+            replace=replace,
+        )
+        result["hybrid_ocr"] = False
+        result["hybrid_ocr_requested"] = True
+        result["hybrid_skipped_reason"] = reason
+        result["native_text"] = text_stats
+        return result
     ocr = _windows_hybrid_ocr(
         pdf,
         progress,

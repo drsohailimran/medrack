@@ -1,11 +1,37 @@
 # MedRack — Change log and audit
 
-**Live version:** **1.3.2** · GitHub tag `v1.3.2`  
-**Date:** 2026-07-10  
+**Live version:** **1.3.3** · GitHub tag `v1.3.3`  
+**Date:** 2026-07-20  
 **Windows:** `C:\Medrack` · **Ubuntu:** `/home/sohail/medrack` · **Data:** `/home/sohail/medrack-data`
 
 Primary deep freeze doc: **`FREEZE_v1.3.2.md`** (use for LLM troubleshooting / feature work).  
 Ops short form: **`HANDOVER.md`**.
+
+---
+
+## v1.3.3 (2026-07-20) — FMT ingest fix + vector-store dedup
+
+### Book ingest
+- **Auto-skip hybrid OCR on text-layer PDFs.** `run_hybrid_ingest_book` now
+  detects a native text layer via `_pdf_native_text_stats()` and ingests the
+  text directly instead of force-OCRing, mirroring the question-bank auto-skip.
+  Fixes *Essentials of Forensic Medicine* (KS Narayan Reddy) failing every
+  hybrid ingest with `OCR quality failed: nonempty=53% (need >=85%)` — the book
+  is a clean digital PDF that never needed OCR.
+- **`replace` no longer orphans/duplicates vectors.** `run_ingest_book`'s
+  replace path now purges the old book's Chroma chunks (`delete_book_chunks`)
+  and archives **every** active manifest record for the sha via `list_books`
+  (not `get_book`, whose first match could be an archived record ordered ahead
+  of the live one). Prevents `kb_<subject>` accumulating duplicate chunks on
+  re-ingest and the spurious `Book with sha256 ... already indexed` failure.
+
+### Verification
+- FMT re-ingested clean: **717/717 pages** covered, **1059 chunks**, **0
+  duplicate texts**; retrieval hits correct chapters/pages. KB source is
+  byte-identical to the supplied PDF (SHA-256 match).
+
+### Notes
+- Ingest-path only — `PIPELINE_VERSIONS` unchanged (no answer-cache impact).
 
 ---
 
